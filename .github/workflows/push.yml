@@ -1,0 +1,44 @@
+# Scheduled push sender for real background notifications.
+#
+# Runs every 5 minutes on GitHub's free runners. Reads master_ledger.json,
+# decides what to push (meal reminders, summaries, announcements), and sends
+# VAPID pushes to every phone via the browser Push API.
+#
+# Requires these secrets in the repo (Settings → Secrets and variables → Actions):
+#   VAPID_PRIVATE_KEY   — base64url P-256 private key
+#   VITE_GITHUB_TOKEN   — read/write token for the data repo
+#   VITE_GITHUB_REPO    — repo name holding master_ledger.json
+#   VITE_GITHUB_USER    — your GitHub username (attribution)
+#   VITE_PUSH_PUBLIC_KEY — base64url P-256 public key (optional; for reference)
+
+name: push
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install web-push
+
+      - name: Run push sender
+        run: node scripts/send-push.mjs
+        env:
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VITE_GITHUB_TOKEN: ${{ secrets.VITE_GITHUB_TOKEN }}
+          VITE_GITHUB_REPO: ${{ secrets.VITE_GITHUB_REPO }}
+          VITE_GITHUB_USER: ${{ secrets.VITE_GITHUB_USER }}
+          VITE_PUSH_PUBLIC_KEY: ${{ secrets.VITE_PUSH_PUBLIC_KEY }}

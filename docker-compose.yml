@@ -1,0 +1,21 @@
+# Dev container for House Ledger.
+# Start with: docker compose up --build
+services:
+  web:
+    build: .
+    container_name: roomshare-dev
+    working_dir: /app
+    volumes:
+      # Bind-mount the source so edits on the host reflect instantly.
+      - .:/app
+      # Keep node_modules inside the container (faster, avoids host mismatch).
+      - /app/node_modules
+    ports:
+      - "5173:5173"
+    environment:
+      # Vite watch fallback for containerized file watching.
+      - CHOKER_POLLING=true
+      - CHOKER_INTERVAL=50
+      - VITE_GITHUB_USER=${VITE_GITHUB_USER:-}
+      - VITE_GITHUB_REPO=${VITE_GITHUB_REPO:-roomshare-data}
+      - VITE_GITHUB_TOKEN=${VITE_GITHUB_TOKEN:-}

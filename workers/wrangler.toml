@@ -1,0 +1,16 @@
+# Cloudflare Worker config for the GitHub proxy.
+#
+# The token and repo details are stored as CLOUDFLARE SECRETS, not here:
+#   wrangler secret put GITHUB_TOKEN
+#   wrangler secret put GITHUB_USER
+#   wrangler secret put GITHUB_REPO
+#
+# Deploy with:  wrangler deploy
+#
+# On the free tier Cloudflare auto-assigns the URL:
+#   https://roomshare-proxy.<your-cloudflare-username>.workers.dev
+# Then set VITE_WORKER_URL in .env.local to that URL.
+
+name = "roomshare-proxy"
+main = "proxy.mjs"
+compatibility_date = "2024-05-24"
