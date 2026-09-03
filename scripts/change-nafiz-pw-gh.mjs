@@ -1,19 +1,22 @@
 // Standalone script: change the `nafiz` user's password in the live master_ledger.json.
-// Replicates the app's exact hashing + encryption so the new password works at login.
+// Uses the `gh` CLI to fetch (read-only) and `curl` with the gh token to PUT,
+// because the Cloudflare proxy worker is not reachable from this machine.
 //
-//   - Fetches the encrypted ledger through the Cloudflare Worker proxy (holds the GitHub token).
+//   - Fetches the encrypted ledger via `gh api`.
 //   - Decrypts with the house password (house2026).
 //   - Generates a strong random password, a fresh salt, and hashes it exactly like security.js:
 //       hash = SHA-256( utf8(`${salt}:${password}`) )  -> hex
 //   - Re-encrypts and PUTs back with the current sha (optimistic concurrency).
 //
-// Usage: node scripts/change-nafiz-pw.mjs
+// Usage: node scripts/change-nafiz-pw-gh.mjs
 
-const API = process.env.VITE_WORKER_URL || 'https://roomshare-proxy.workers.dev'
-const HOUSE_PW = process.env.VITE_HOUSE_PASSWORD || 'house2026'
+import { execFileSync } from 'node:child_process'
+
 const GH_USER = process.env.VITE_GITHUB_USER || 'centraldevadmin-business'
 const GH_REPO = process.env.VITE_GITHUB_REPO || 'roomshare-data'
 const PATH = 'master_ledger.json'
+const HOUSE_PW = process.env.VITE_HOUSE_PASSWORD || 'house2026'
+const GH_BIN = '/Users/nafiz/bin/gh'
 
 const encVersion = 1
 const pbkdf2Iter = 250000
@@ -52,11 +55,8 @@ async function decryptLedger(content, password) {
   return { plaintext: new TextDecoder().decode(pt), encrypted: true }
 }
 
-async function apiRequest(method, url, headers = {}, body) {
-  const contentsPath = url.split('/contents/')[1] || ''
-  const workerUrl = `${API}/contents/${contentsPath}`
-  const res = await fetch(workerUrl, { method, headers: { 'User-Agent': 'roomshare-pwa', 'Accept': 'application/vnd.github+json', ...headers }, body })
-  return res
+function gh(args) {
+  return execFileSync(GH_BIN, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
 }
 
 // Strong 16-char password: upper, lower, digit, symbol, shuffled.
@@ -64,7 +64,7 @@ function strongPassword() {
   const upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
   const lower = 'abcdefghijklmnopqrstuvwxyz'
   const digits = '0123456789'
-  const symbols = '!@#$%^&*()-_=+'
+  const symbols = '!@#$%^&*()-_='
   const all = upper + lower + digits + symbols
   const required = [upper, lower, digits, symbols]
   const len = 16
@@ -89,12 +89,10 @@ async function hashPassword(password, salt) {
 }
 
 async function main() {
-  const url = `${API}/contents/${PATH}`
-  const res = await apiRequest('GET', url)
-  if (!res.ok) throw new Error(`GET failed ${res.status}: ${await res.text()}`)
-  const data = await res.json()
-  const sha = data.sha // GitHub sha lives in the JSON body, not a CORS-exposed header
-  const raw = atob(data.content).replace(/\n$/, '')
+  // Fetch the file metadata + base64 content.
+  const meta = JSON.parse(gh(['api', `repos/${GH_USER}/${GH_REPO}/contents/${PATH}`, '--jq', 'tojson']))
+  const sha = meta.sha
+  const raw = atob(meta.content).replace(/\n$/, '')
 
   const { plaintext, encrypted } = await decryptLedger(raw, HOUSE_PW)
   if (!plaintext) throw new Error('Decryption failed — wrong house password or corrupt ledger.')
@@ -113,14 +111,24 @@ async function main() {
 
   const encrypted2 = await encryptLedger(JSON.stringify(ledger, null, 2), HOUSE_PW)
 
-  // PUT back with sha for optimistic concurrency.
-  const putUrl = `${API}/contents/${PATH}`
-  const putRes = await apiRequest('PUT', putUrl, { 'Content-Type': 'application/json' }, JSON.stringify({
+  // PUT back with sha for optimistic concurrency, using curl + gh token.
+  const token = gh(['auth', 'token']).trim()
+  const body = JSON.stringify({
     message: `roomshare: change nafiz password (${new Date().toISOString()})`,
     content: btoa(unescape(encodeURIComponent(encrypted2))),
     sha,
-  }))
-  if (!putRes.ok) throw new Error(`PUT failed ${putRes.status}: ${await putRes.text()}`)
+  })
+  const putUrl = `https://api.github.com/repos/${GH_USER}/${GH_REPO}/contents/${PATH}`
+  const putRes = await fetch(putUrl, {
+    method: 'PUT',
+    headers: {
+      'Authorization': `token ${token}`,
+      'Accept': 'application/vnd.github+json',
+      'User-Agent': 'roomshare-pwa',
+      'Content-Type': 'application/json',
+    },
+    body,
+  })
   if (!putRes.ok) throw new Error(`PUT failed ${putRes.status}: ${await putRes.text()}`)
 
   console.log('✅ nafiz password changed and pushed to GitHub.')

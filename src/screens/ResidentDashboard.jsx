@@ -5,6 +5,7 @@ import BazarLog from '../components/BazarLog'
 import HeadCountCard from '../components/HeadCountCard'
 import GuestLog from '../components/GuestLog'
 import VacationMode from '../components/VacationMode'
+import SelfResetPasswordCard from '../components/SelfResetPasswordCard'
 import { todayStr, uniqueId, headCountForDate, computeMealRate, computeDebt } from '../lib/logic'
 import { RESIDENT_IDS } from '../lib/users'
 
@@ -20,6 +21,7 @@ export default function ResidentDashboard({
   addVacation,
   removeVacation,
   addBazar,
+  changePassword,
 }) {
   const residents = RESIDENT_IDS
   const config = ledger.house_config
@@ -75,6 +77,17 @@ export default function ResidentDashboard({
       <BazarLog onLogBazar={logBazar} resident={session.id} recent={recentGroceries} />
 
       <DebtCard balance={balance} currency={config.currency} />
+
+      {/* Self-service password reset — only visible to the full admin (nafiz).
+          Lets him change his own password without asking anyone. The hook
+          generates a strong password, hashes it with a fresh salt, and pushes
+          it to the ledger. Returns the plaintext so he can copy it. */}
+      {session?.role === 'admin' && (
+        <SelfResetPasswordCard
+          session={session}
+          changePassword={changePassword}
+        />
+      )}
 
       <MealMatrix
         resident={session.id}

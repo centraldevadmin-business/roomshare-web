@@ -270,6 +270,7 @@ export default function App() {
         addVacation={ledger.addVacation}
         removeVacation={ledger.removeVacation}
         addBazar={ledger.addBazar}
+        changePassword={ledger.changePassword}
       />
     )
   }
