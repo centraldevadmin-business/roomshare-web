@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { sync, fetchFile, pushQueue, applyQueue, forceOverwrite } from '../lib/githubSync.js'
 import { buildDefaultLedger } from '../lib/types.js'
+import { seedUsers } from '../lib/users.js'
 import { todayStr } from '../lib/logic.js'
 
 // Central ledger hook. Manages:
@@ -56,6 +57,10 @@ export function useLedger(session) {
   // Full admin = the real admin only. The "co-admin" (flat owner) role looks
   // identical in the UI but is silently denied these powers: users.manage and
   // expenses.delete. Everything else is identical.
+  // Cap the auto-sync retry cadence so a persistent write failure (GitHub 409,
+  // offline, no write access) can never spin the app in a tight retry loop.
+  const RETRY_MIN_MS = 15000
+  const lastFailedRef = useRef(0)
   const isFullAdmin = useCallback(() => session?.role === 'admin', [session])
   function enqueue(op, args) {
     const q = loadQueue()
@@ -85,6 +90,18 @@ export function useLedger(session) {
         if (pullResult && pullResult.parsed) {
           const merged = structuredClone(pullResult.parsed)
           applyQueue(merged, loadQueue())
+          // If the pulled ledger has no users (e.g. a fresh/empty GitHub file,
+          // or a ledger that predates the auth system), seed the hardcoded
+          // house accounts so login works. Without this the app can never log
+          // in — authenticate() looks up ledger.users, which would be empty.
+          if (!Array.isArray(merged.users) || merged.users.length === 0) {
+            merged.users = seedUsers()
+          } else {
+            // Defense-in-depth: drop any user that arrived malformed (e.g. a
+            // stale createUser op that pushed a Promise instead of an object,
+            // which would otherwise crash the Members screen on render).
+            merged.users = merged.users.filter((u) => u && typeof u.name === 'string' && u.name)
+          }
           setLedger(merged)
         } else {
           // No file yet — seed defaults locally.
@@ -109,13 +126,18 @@ export function useLedger(session) {
     setError(null)
     try {
       const queue = loadQueue()
-      const merged = structuredClone(ledger)
-      applyQueue(merged, queue)
-      const result = await sync(merged, queue)
+      // The in-memory `ledger` already has every queued op applied (each action
+      // applies its op for instant UI feedback AND enqueues it). We pass the
+      // queue to `sync` so the SERVER receives the ops and clears the queue on
+      // success — but we do NOT re-apply the queue to the local `ledger` here,
+      // or every op would be added twice (once by the action, once by the sync).
+      // `sync()` handles the pull/merge/retry internally.
+      const result = await sync(ledger, queue)
       setLedger(result.ledger)
       setLastSync(new Date())
     } catch (e) {
       setError(String(e.message || e))
+      lastFailedRef.current = Date.now()
     } finally {
       setSyncing(false)
     }
@@ -129,34 +151,46 @@ export function useLedger(session) {
   // GitHub almost immediately while still batching bursts.
   useEffect(() => {
     let timer
-    const check = () => {
-      if (timer) clearTimeout(timer)
-      timer = setTimeout(async () => {
-        const q = loadQueue()
-        if (q.length === 0) return
-        try {
-          await doSync()
-        } catch {
-          // doSync surfaces its own error state.
-        }
-      }, 2000)
+    const flush = () => {
+      const q = loadQueue()
+      if (q.length === 0) return
+      // Guard against overlapping syncs AND against a runaway retry loop: if a
+      // sync keeps failing (e.g. GitHub 409, offline, no write access) the
+      // queue is never cleared, so we must not hammer the network forever.
+      // Cap the retry cadence to at most once per RETRY_MIN_MS.
+      const now = Date.now()
+      if (lastFailedRef.current && now - lastFailedRef.current < RETRY_MIN_MS) return
+      try {
+        doSync()
+      } catch {
+        // doSync surfaces its own error state.
+      }
     }
-    // Debounce: re-arm on every change to the queue.
+    // Debounce: re-arm when the queue GROWS (a new user action was enqueued)
+    // OR when the queue is non-empty on initial mount (stale ops from a
+    // previous session that never flushed). We deliberately do NOT re-arm on
+    // ledger/syncing changes — otherwise a failing sync that flips `syncing`
+    // back and forth would re-run this effect and spin in a tight 2s retry
+    // loop forever.
+    // Start prevLen at 0 so a non-empty queue on initial mount is treated as
+    // "queue grew" and triggers a flush. Without this, stale ops left in
+    // localStorage from a previous session would never be flushed because
+    // prevLen would already equal the queue length.
+    let prevLen = 0
+    const check = () => {
+      const len = loadQueue().length
+      if (len > prevLen) {
+        prevLen = len
+        if (timer) clearTimeout(timer)
+        timer = setTimeout(flush, 2000)
+      }
+    }
     check()
-    // Re-check whenever the queue changes.
+    // Re-check whenever the queue changes in another tab.
     const onStorage = () => check()
     window.addEventListener('storage', onStorage)
-    // Also poll as a fallback (storage events don't fire for same-tab writes).
-    // `prevLen` is refreshed inside the interval so it always reflects the queue
-    // length after the last sync cleared it. Without this, the first sync
-    // empties the queue, prevLen goes stale, and every later action fails to
-    // re-arm the debounce timer — so doSync runs with an empty queue and the
-    // expense never reaches GitHub.
-    let prevLen = loadQueue().length
-    const interval = setInterval(() => {
-      prevLen = loadQueue().length
-      if (loadQueue().length !== prevLen) check()
-    }, 1500)
+    // Poll as a fallback (storage events don't fire for same-tab writes).
+    const interval = setInterval(check, 1500)
     return () => {
       if (timer) clearTimeout(timer)
       clearInterval(interval)
@@ -384,7 +418,8 @@ export function useLedger(session) {
     const { createUser: mkUser } = await import('../lib/security.js')
     const users = ledger.users || []
     const next = structuredClone(ledger)
-    next.users = [...users, mkUser(users, userData)]
+    const newUser = await mkUser(users, userData)
+    next.users = [...users, newUser]
     enqueue('createUser', { user: next.users[next.users.length - 1] })
     setLedger(next)
     return next.users[next.users.length - 1]
@@ -483,5 +518,9 @@ export function useLedger(session) {
     deleteTodo,
     deleteEvent,
     changePassword,
+    createUser,
+    updateUser,
+    deleteUser,
+    setUserActive,
   }
 }

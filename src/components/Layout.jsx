@@ -82,8 +82,10 @@ export function AppShell({ session, role, announcements, children, tabs, activeT
         {menuOpen && (
           <div className="max-w-md mx-auto px-4 pb-3 animate-fade-up">
             <div className="bg-white border border-slate-200 rounded-2xl shadow-lg p-2">
-              {/* Superadmin mode toggle — only shown to the full admin (nafiz) */}
-              {session?.role === 'admin' && onToggleAdmin && (
+              {/* Superadmin mode toggle — shown to the full admin (nafiz) and the
+                  co-admin (mohin). Both start in resident mode and flip to admin
+                  mode from here, exactly like each other. */}
+              {(session?.role === 'admin' || session?.role === 'cadmin') && onToggleAdmin && (
                 <button
                   onClick={() => { onToggleAdmin(!adminMode); setMenuOpen(false) }}
                   className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-sm text-slate-700 hover:bg-slate-50 transition-colors text-left"

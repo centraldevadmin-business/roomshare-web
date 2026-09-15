@@ -271,7 +271,7 @@ export default function UserManagement({ ledger, session, createUser, updateUser
             }`}
           >
             <div className="w-10 h-10 rounded-full bg-orange-100 text-orange-600 flex items-center justify-center font-bold">
-              {u.name.charAt(0).toUpperCase()}
+              {(u.name && u.name.charAt(0).toUpperCase()) || '?'}
             </div>
             <div className="flex-1 min-w-0">
               <div className="font-semibold text-slate-800 truncate">{u.name}</div>

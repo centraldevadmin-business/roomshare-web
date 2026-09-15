@@ -184,17 +184,6 @@ export default function HouseSettings({ config, onSave }) {
 
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="block text-xs text-slate-400 mb-1">Dinner locks at (hour, 24h)</label>
-            <input
-              type="number"
-              min="0"
-              max="23"
-              value={form.cutoffHour}
-              onChange={set('cutoffHour')}
-              className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800"
-            />
-          </div>
-          <div>
             <label className="block text-xs text-slate-400 mb-1">Month-finalize day (gate)</label>
             <input
               type="number"

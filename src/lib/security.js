@@ -145,8 +145,10 @@ export function clearSession() {
 // The first user to sign up becomes admin. After that, signup requires an
 // invite code (set in house_config.inviteCode) so random people can't join.
 export async function createUser(users, { name, email, username, password, role }) {
+  const normEmail = (email || '').toLowerCase().trim()
+  const normUser = String(username || '').toLowerCase().trim()
   const existing = users.find(
-    (u) => u.email.toLowerCase() === email.toLowerCase() || u.username.toLowerCase() === username.toLowerCase()
+    (u) => (u.email || '').toLowerCase() === normEmail || u.username.toLowerCase() === normUser
   )
   if (existing) {
     throw new Error('A user with that email or username already exists.')
@@ -156,8 +158,8 @@ export async function createUser(users, { name, email, username, password, role 
   return {
     id: `user_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     name,
-    email: email.toLowerCase().trim(),
-    username: username.toLowerCase().trim(),
+    email: normEmail,
+    username: normUser,
     role: role || DEFAULT_ROLE,
     salt,
     passwordHash,

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuth } from './hooks/useAuth'
 import { useLedger } from './hooks/useLedger'
 import { useNotifications } from './hooks/useNotifications'
@@ -42,7 +42,12 @@ export default function App() {
   // normal resident dashboard. He flips to admin mode from the menu. This is
   // what the user asked for: "at first when I log in, the first page should
   // look like a normal resident like neloy."
-  const [adminMode, setAdminMode] = useState(session?.role === 'admin')
+  // Both the full admin (nafiz) and the co-admin (mohin) start in resident
+  // mode — the first page looks like a normal resident dashboard. They flip to
+  // admin mode from the menu, exactly like each other.
+  const [adminMode, setAdminMode] = useState(
+    session?.role === 'admin' || session?.role === 'cadmin',
+  )
 
   // Show the first-login tutorial exactly once per user. We track it in
   // localStorage keyed by user id so it never reappears after the first time.
@@ -61,6 +66,14 @@ export default function App() {
 
   const ledger = useLedger(session)
 
+  // Keep a ref to the latest ledger so effects that must run once per login
+  // can call ledger.doSync() WITHOUT depending on the `ledger` object. The
+  // ledger object changes identity on every setLedger() call, so depending on
+  // it directly would re-run the effect on every sync — spinning in a tight
+  // loop whenever the network write fails.
+  const ledgerRef = useRef(ledger)
+  ledgerRef.current = ledger
+
   // Notifications: request permission on login, tick for meal reminders and
   // new announcements. No server = notifications only fire while the app is
   // open on a phone.
@@ -69,6 +82,13 @@ export default function App() {
   // Real background push: register the push service worker and write the
   // subscription to the ledger once, after login. The scheduled GitHub Action
   // reads these subscriptions and sends pushes even when the app is closed.
+  // Real background push: register the push service worker and write the
+  // subscription to the ledger once, after login. The scheduled GitHub Action
+  // reads these subscriptions and sends pushes even when the app is closed.
+  // Depends on the session id string (not the `ledger` object) so it runs once
+  // per login and does NOT re-run whenever the ledger changes — otherwise the
+  // doSync() inside would flip ledger state and spin in a tight loop.
+  const pushSessionId = session?.id || null
   useEffect(() => {
     if (!session) return
     let cancelled = false
@@ -79,8 +99,8 @@ export default function App() {
         const sub = await createPushSubscription()
         if (cancelled || !sub) return
         const record = buildSubscriptionRecord(sub, session.id)
-        ledger.enqueue('addPushSubscription', { sub: record })
-        await ledger.doSync()
+        ledgerRef.current.enqueue('addPushSubscription', { sub: record })
+        await ledgerRef.current.doSync()
       } catch {
         // Push is best-effort; never block the app if it fails.
       }
@@ -88,7 +108,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [session, ledger])
+  }, [session, pushSessionId])
 
   // Persist a newly signed-up user into the ledger before logging them in.
   const persistUser = async (ledgerData, newUser) => {
@@ -105,13 +125,17 @@ export default function App() {
     login(user)
   }
 
-  // Auto-sync on login and periodically.
+  // Auto-sync once on login. We intentionally depend on a session id string
+  // (not the `ledger` object) so this effect does NOT re-run every time the
+  // ledger changes — otherwise doSync() would flip ledger state, re-run this
+  // effect, and spin in a tight loop even when the network is fine.
+  const sessionId = session?.id || null
   useEffect(() => {
     if (!session) return
     let cancelled = false
     ;(async () => {
       try {
-        await ledger.doSync()
+        await ledgerRef.current.doSync()
       } finally {
         // No-op: sync status is surfaced via ledger.syncing / ledger.error,
         // which AppShell reads directly. The local syncStatus state was dead
@@ -122,7 +146,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [session, ledger])
+  }, [session, sessionId])
 
   // Staggered background sync — twice daily at precise times to avoid GitHub
   // collisions. Admins sync at 04:00 / 16:00, residents staggered by a few
@@ -148,7 +172,7 @@ export default function App() {
       setTimeout(async () => {
         if (cancelled) return
         try {
-          await ledger.doSync()
+          await ledgerRef.current.doSync()
         } finally {
           if (!cancelled) return
         }
@@ -159,7 +183,7 @@ export default function App() {
     return () => {
       cancelled = true
     }
-  }, [session, ledger])
+  }, [session, sessionId])
 
   // No session yet → show login / signup.
   if (!session) {
@@ -177,11 +201,11 @@ export default function App() {
   // expenses) are silently enforced in useLedger, so the buttons just don't do
   // anything for him — he never sees a difference.
   //
-  // The full admin (nafiz) additionally has an admin/resident toggle. When
-  // adminMode is off he sees the resident dashboard; when on he sees the admin
-  // tabs. The co-admin always sees admin tabs (no toggle needed).
-  const isAdmin = session.role === 'cadmin'
-    || (session.role === 'admin' && adminMode)
+  // Both of them start in resident mode and flip to admin mode from the menu,
+  // exactly like each other. When adminMode is off they see the resident
+  // dashboard; when on they see the admin tabs.
+  const isAdmin = (session.role === 'admin' || session.role === 'cadmin')
+    && adminMode
   const tabs = isAdmin ? ADMIN_TABS : RESIDENT_TABS
 
   const renderScreen = () => {
@@ -220,6 +244,22 @@ export default function App() {
             deleteUser={ledger.deleteUser}
             setUserActive={ledger.setUserActive}
             changePassword={ledger.changePassword}
+          />
+        )
+      }
+      if (tab === 'community') {
+        return (
+          <CommunityScreen
+            session={session}
+            announcements={ledger.ledger.announcements}
+            todos={ledger.ledger.todos}
+            events={ledger.ledger.calendar_events}
+            postAnnouncement={ledger.postAnnouncement}
+            addTodo={ledger.addTodo}
+            toggleTodo={ledger.toggleTodo}
+            deleteTodo={ledger.deleteTodo}
+            addEvent={ledger.addEvent}
+            deleteEvent={ledger.deleteEvent}
           />
         )
       }

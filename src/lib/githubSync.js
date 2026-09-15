@@ -345,7 +345,8 @@ export async function sync(ledger, queue) {
   if (!pull) {
     // No file yet: seed with defaults, apply queue, create it.
     const seeded = seedLedger(ledger)
-    applyQueue(seeded, queue)
+    // NOTE: `ledger` already has every queued op applied by the calling action,
+    // so we must NOT re-apply the queue here (that would double-add every op).
     await writeFile(JSON.stringify(seeded, null, 2), null)
     return { ledger: seeded, created: true }
   }
