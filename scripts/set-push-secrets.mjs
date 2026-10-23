@@ -2,7 +2,7 @@ import { seal } from './tweetnacl-loader.mjs'
 
 const TOKEN = process.env.VITE_GITHUB_TOKEN || ''
 const OWNER = 'centraldevadmin-business'
-const REPO = 'roomshare-data'
+const REPO = 'roomshare-web'
 
 const secrets = {
   VAPID_PRIVATE_KEY: process.env.VAPID_PRIVATE_KEY || '',

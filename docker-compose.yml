@@ -17,5 +17,5 @@ services:
       - CHOKER_POLLING=true
       - CHOKER_INTERVAL=50
       - VITE_GITHUB_USER=${VITE_GITHUB_USER:-}
-      - VITE_GITHUB_REPO=${VITE_GITHUB_REPO:-roomshare-data}
+      - VITE_GITHUB_REPO=${VITE_GITHUB_REPO:-roomshare-web}
       - VITE_GITHUB_TOKEN=${VITE_GITHUB_TOKEN:-}

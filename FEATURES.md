@@ -197,7 +197,7 @@ npm install          # already done
 npm run dev          # start dev server
 ```
 
-1. Create a private GitHub repo `roomshare-data`
+1. The ledger lives in `master_ledger.json` at the root of this repo (merged from the old `roomshare-data` repo)
 2. Generate a fine-grained token with Read & Write access
 3. `cp .env.example .env.local` and fill in `VITE_GITHUB_USER`, `VITE_GITHUB_REPO`, `VITE_GITHUB_TOKEN`
 4. Log in — the app seeds `master_ledger.json` on first sync

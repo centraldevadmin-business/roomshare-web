@@ -12,7 +12,7 @@
 const API = process.env.VITE_WORKER_URL || 'https://roomshare-proxy.workers.dev'
 const HOUSE_PW = process.env.VITE_HOUSE_PASSWORD || 'house2026'
 const GH_USER = process.env.VITE_GITHUB_USER || 'centraldevadmin-business'
-const GH_REPO = process.env.VITE_GITHUB_REPO || 'roomshare-data'
+const GH_REPO = process.env.VITE_GITHUB_REPO || 'roomshare-web'
 const PATH = 'master_ledger.json'
 
 const encVersion = 1

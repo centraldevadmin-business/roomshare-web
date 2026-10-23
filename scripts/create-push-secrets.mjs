@@ -1,10 +1,10 @@
 // Creates the 5 GitHub Actions secrets needed by .github/workflows/push.yml
-// in the data repo (centraldevadmin-business/roomshare-data).
+// in this repo (centraldevadmin-business/roomshare-web).
 //
 // Secrets:
 //   VAPID_PRIVATE_KEY   - base64 VAPID private key (from .vapid-private-key.txt)
 //   VITE_GITHUB_TOKEN   - GitHub PAT
-//   VITE_GITHUB_REPO    - roomshare-data
+//   VITE_GITHUB_REPO    - roomshare-web
 //   VITE_GITHUB_USER    - centraldevadmin-business
 //   VITE_PUSH_PUBLIC_KEY- base64url VAPID public key (from public/vapid-public-key.txt)
 //
@@ -45,7 +45,7 @@ if (!ghToken) {
 const secrets = {
   VAPID_PRIVATE_KEY: vapidPrivB64,
   VITE_GITHUB_TOKEN: ghToken,
-  VITE_GITHUB_REPO: 'roomshare-data',
+  VITE_GITHUB_REPO: 'roomshare-web',
   VITE_GITHUB_USER: 'centraldevadmin-business',
   VITE_PUSH_PUBLIC_KEY: vapidPubB64,
 }
@@ -91,7 +91,7 @@ function apiRequest(method, url, body) {
 }
 
 const OWNER = 'centraldevadmin-business'
-const REPO = 'roomshare-data'
+const REPO = 'roomshare-web'
 const apiUrl = `https://api.github.com/repos/${OWNER}/${REPO}/actions/secrets`
 
 // Fetch existing public key (repo-level encryption key).

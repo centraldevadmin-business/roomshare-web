@@ -45,10 +45,11 @@ its database — no server, no database hosting, no monthly fees.
 
 ## Setup (takes ~5 minutes, $0)
 
-### 1. Create the data repo
+### 1. The ledger file
 
-1. Create a **new private** GitHub repo called `roomshare-data`.
-2. (Optional) Drop an initial `master_ledger.json` in the repo, or let the app seed it on first sync.
+The app's "database" is `master_ledger.json` at the root of this repo (merged in
+from the old `roomshare-data` repo in October 2026). On first sync the app creates
+it if it does not exist.
 
 ### 2. Deploy the token-holding Worker (this is what keeps your data private)
 
@@ -61,7 +62,7 @@ npm install -g wrangler          # one-time
 wrangler login                   # log in with your Cloudflare account
 wrangler secret put GITHUB_TOKEN <your-token>
 wrangler secret put GITHUB_USER  centraldevadmin-business
-wrangler secret put GITHUB_REPO  roomshare-data
+wrangler secret put GITHUB_REPO  roomshare-web
 wrangler deploy                  # prints https://roomshare-proxy.<username>.workers.dev
 ```
 
@@ -78,7 +79,7 @@ Edit `.env.local`:
 
 ```env
 VITE_GITHUB_USER=centraldevadmin-business
-VITE_GITHUB_REPO=roomshare-data
+VITE_GITHUB_REPO=roomshare-web
 VITE_WORKER_URL=https://roomshare-proxy.<username>.workers.dev
 ```
 
@@ -152,8 +153,8 @@ Notifications land on everyone's phone **no matter where they are, even with the
    | Secret | Where from |
    |---|---|
    | `VAPID_PRIVATE_KEY` | the PRIVATE value from step 1 |
-   | `VITE_GITHUB_TOKEN` | a token with read/write to `roomshare-data` (server-side, never in the app) |
-   | `VITE_GITHUB_REPO` | `roomshare-data` |
+   | `VITE_GITHUB_TOKEN` | a token with read/write to `roomshare-web` (server-side, never in the app) |
+   | `VITE_GITHUB_REPO` | `roomshare-web` |
    | `VITE_GITHUB_USER` | your GitHub username |
    | `VITE_PUSH_PUBLIC_KEY` | the PUBLIC value from step 1 |
 

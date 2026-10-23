@@ -6,7 +6,7 @@
 #
 # Requires these secrets in the repo (Settings → Secrets and variables → Actions):
 #   VAPID_PRIVATE_KEY   — base64url P-256 private key
-#   VITE_GITHUB_TOKEN   — read/write token for the data repo
+#   VITE_GITHUB_TOKEN   — read/write token for this repo
 #   VITE_GITHUB_REPO    — repo name holding master_ledger.json
 #   VITE_GITHUB_USER    — your GitHub username (attribution)
 #   VITE_PUSH_PUBLIC_KEY — base64url P-256 public key (optional; for reference)

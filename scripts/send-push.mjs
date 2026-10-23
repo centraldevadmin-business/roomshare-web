@@ -17,8 +17,11 @@ import { RESIDENT_IDS } from '../src/lib/users.js'
 
 const env = (k) => process.env[k] || ''
 
+// NOTE: setVapidDetails(subject, publicKey, privateKey) — `subject` must be a
+// plain string (an https: URL or mailto: address), NOT an object. Passing an
+// object made every scheduled run crash in web-push's validateSubject().
 webpush.setVapidDetails(
-  { subject: `mailto:${env('VITE_GITHUB_USER') || 'roomshare'}@localhost` },
+  `mailto:${env('VITE_GITHUB_USER') || 'roomshare'}@localhost`,
   env('VITE_PUSH_PUBLIC_KEY') || '',
   env('VAPID_PRIVATE_KEY') || '',
 )

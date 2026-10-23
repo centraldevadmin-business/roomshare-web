@@ -82,7 +82,7 @@
 
 ## Deployment
 - Web app → GitHub Pages via `.github/workflows/deploy.yml` (peaceiris/actions-gh-pages, publishes `dist/`). Also deployable manually: push `dist/*` to `gh-pages` branch.
-- Data repo: `centraldevadmin-business/roomshare-data` (private) holds `master_ledger.json`. Seeded with initial ledger + fixed costs.
+- Data: `master_ledger.json` now lives at the root of THIS (web) repo — merged from the old private `roomshare-data` repo on 2026-10-24. Only the current (encrypted) file was copied in; the 9k-commit history (incl. one plaintext seed commit) stays in the old repo. Old data repo gets archived AFTER the Worker's GITHUB_REPO secret is switched to `roomshare-web` (`wrangler secret put GITHUB_REPO roomshare-web`).
 - Live site: https://centraldevadmin-business.github.io/roomshare-web/
 
 ## Security — token rotation (CRITICAL)
@@ -102,7 +102,7 @@
 ## LIVE DEPLOY (2026-09-03)
 - App URL: https://7ec16a3a.roomshare-app.pages.dev/ (Cloudflare Pages, project roomshare-app).
 - Worker proxy: https://roomshare-proxy.central-dev-admin.workers.dev (deployed via wrangler, version 9ea00648).
-- Web repo: centraldevadmin-business/roomshare-web (pushed). Data repo: centraldevadmin-business/roomshare-data.
+- Web repo: centraldevadmin-business/roomshare-web (pushed; now also holds master_ledger.json — single-repo setup). Data repo: centraldevadmin-business/roomshare-data (to be archived after Worker switch).
 - Cloudflare API key: stored in the environment (CLOUDFLARE_API_TOKEN); session-scoped, re-deploy with it. Do NOT paste the raw key into this file — GitHub secret scanning will reject the push.
 - Deploy commands: `npm run build` then `CLOUDFLARE_API_TOKEN=... ./workers/node_modules/.bin/wrangler pages deploy dist --project-name=roomshare-app`; Worker: `cd workers && CLOUDFLARE_API_TOKEN=... ./node_modules/.bin/wrangler deploy`.
 - Playwright is in LOCAL node_modules (`/Users/nafiz/roomshare/node_modules/playwright/index.js`), NOT /tmp/pwtest (that path is gone).
