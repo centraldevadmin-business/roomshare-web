@@ -253,6 +253,15 @@ test.describe('UAT C — Resident dashboard (bazar, vacation, password)', () => 
     } catch {
       /* tutorial already dismissed */
     }
+    // Leave the shared ledger as we found it: change the password back to
+    // the seeded one. Without this, a production run would permanently leave
+    // the household with the test password.
+    const revertForm = page.locator('form').filter({ has: page.getByPlaceholder('Current password') })
+    await revertForm.getByPlaceholder('Current password').fill('NewPass@123')
+    await revertForm.getByPlaceholder('New password (min 8 characters)').fill('House@Ledger#2026!')
+    await revertForm.getByPlaceholder('Repeat new password').fill('House@Ledger#2026!')
+    await revertForm.getByRole('button', { name: 'Update Password' }).click()
+    await expect(page.getByText('Password updated. The old one no longer works.')).toBeVisible({ timeout: 5000 })
     // The password change is the last write of this test.
     await flushSettled(page)
   })
@@ -326,10 +335,20 @@ test.describe('UAT D — Deposit inbox', () => {
   test('invalid deposit amount is rejected with an inline error', async ({ page }) => {
     await login(page, RESIDENT)
     await page.getByRole('button', { name: 'Ledger' }).click()
-    // The shared ledger may already hold pending deposits, so assert the count
-    // is unchanged rather than zero.
+    // The shared ledger may already hold pending deposits, and the production
+    // pull takes a second or two — wait for the Ledger screen to render and
+    // the count to stabilize before taking the baseline. ("Recent Deposits"
+    // is conditional on having deposits, so anchor on "My Full Report".)
+    await expect(page.getByRole('heading', { name: 'My Full Report' })).toBeVisible()
     const pendingCount = () => page.getByText('PENDING', { exact: true }).count()
-    const before = await pendingCount()
+    let stable = -1
+    let before = 0
+    for (let i = 0; i < 40; i++) {
+      const c = await pendingCount()
+      if (c === stable) { before = c; break }
+      stable = c
+      await page.waitForTimeout(300)
+    }
     await page.getByPlaceholder('Amount').fill('-100')
     await page.getByRole('button', { name: 'Submit Deposit Request' }).click()
     await expect(page.getByText('Enter an amount greater than zero.')).toBeVisible()
@@ -421,18 +440,27 @@ test.describe('UAT F — Admin: Ledger Ops', () => {
   }
 
   test('log a grocery and a utility, then edit within the correction window', async ({ page }) => {
-    await addExpense(page, { amount: 250, vendor: 'Dutch Bazar', note: 'rice + dal' })
-    await expect(page.getByText('paid by Nafiz')).toBeVisible()
+    const note = `rice + dal (${RUN})`
+    await addExpense(page, { amount: 250, vendor: 'Dutch Bazar', note })
+    await expect(page.getByText(note)).toBeVisible()
     await addExpense(page, { type: 'utility', amount: 300, vendor: 'City Gas', note: 'monthly gas' })
 
     // Both entries are within the 24-hour correction window → editable.
-    const firstEdit = page.getByRole('button', { name: 'Edit' }).first()
-    await firstEdit.click()
+    // Scope the Edit button to our own row: the shared ledger holds other
+    // editable expenses from earlier runs ("paid by Nafiz" is not unique).
+    // Partial match: the note renders inside a combined "date · note · paid
+    // by" line, so exact text matching finds nothing.
+    const row = page
+      .getByText(note)
+      .locator('xpath=ancestor::div[contains(@class,"rounded-2xl")][1]')
+    await row.getByRole('button', { name: 'Edit' }).click()
     const editForm = page.locator('form').filter({ has: page.getByRole('button', { name: 'Save Changes' }) })
     await expect(editForm).toBeVisible()
     await editForm.locator('input[type="number"]').fill('275')
     await editForm.getByRole('button', { name: 'Save Changes' }).click()
     await expect(page.getByText('TK 275')).toBeVisible({ timeout: 5000 })
+    // The edit is the last write of this test.
+    await flushSettled(page)
   })
 
   test('filters narrow the expense log by type and search', async ({ page }) => {
