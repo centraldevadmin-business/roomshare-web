@@ -68,6 +68,25 @@ async function logout(page) {
   await expect(page.locator('h1:has-text("House Ledger")')).toBeVisible()
 }
 
+// Wait for the offline queue to be flushed to the server. The auto-flush
+// fires ~2s after the last write and the push takes another second or two,
+// so without this a test's FINAL op can be lost when its context closes —
+// which is exactly how production runs previously left writes missing their
+// last step. In local-only mode (no GitHub) the queue never clears, so the
+// poll times out quickly and we bail out.
+async function flushSettled(page) {
+  try {
+    await expect
+      .poll(async () => {
+        const raw = await page.evaluate(() => localStorage.getItem('roomshare:queue'))
+        return JSON.parse(raw || '[]').length
+      }, { timeout: 15000 })
+      .toBe(0)
+  } catch {
+    /* local-only mode: the queue is kept by design (no remote to flush to) */
+  }
+}
+
 // Today's meal slots are all open before 16:00 (dinner locks at 16:00,
 // breakfast/lunch at the 21:00 cutoff). Tests that touch TODAY's slots are
 // skipped in the locked window so the suite is time-independent.
@@ -234,6 +253,8 @@ test.describe('UAT C — Resident dashboard (bazar, vacation, password)', () => 
     } catch {
       /* tutorial already dismissed */
     }
+    // The password change is the last write of this test.
+    await flushSettled(page)
   })
 })
 
@@ -272,6 +293,8 @@ test.describe('UAT D — Deposit inbox', () => {
     await inboxRow.getByRole('button', { name: 'Verify' }).click()
     // Our deposit left the inbox (other pending deposits may remain).
     await expect(page.getByText(note, { exact: true })).toHaveCount(0)
+    // The Verify op is the last write of this test — let it reach the server.
+    await flushSettled(page)
   })
 
   test('admin can reject a deposit', async ({ page }) => {
@@ -296,6 +319,8 @@ test.describe('UAT D — Deposit inbox', () => {
     await inboxRow.getByRole('button', { name: 'Reject' }).click()
     // Our deposit left the inbox (other pending deposits may remain).
     await expect(page.getByText(note, { exact: true })).toHaveCount(0)
+    // The deposit + reject ops are the last writes of this test.
+    await flushSettled(page)
   })
 
   test('invalid deposit amount is rejected with an inline error', async ({ page }) => {
@@ -447,6 +472,8 @@ test.describe('UAT F — Admin: Ledger Ops', () => {
     await row.getByRole('button', { name: 'Lock' }).click()
     await expect(row).toContainText('LOCKED')
     await expect(row.getByRole('button', { name: 'Lock' })).toHaveCount(0)
+    // The lock op is the last write of this test.
+    await flushSettled(page)
   })
 
   test('deleting an expense asks for confirmation first', async ({ page }) => {
@@ -622,6 +649,8 @@ test.describe('UAT H — Admin: Members', () => {
     page.once('dialog', (d) => d.accept())
     await memberRow(page, mname).getByTitle('Delete').click()
     await expect(memberRow(page, mname)).toHaveCount(0)
+    // The delete op is the last write of this test.
+    await flushSettled(page)
   })
 
   test('admin cannot delete their own account', async ({ page }) => {
@@ -715,6 +744,8 @@ test.describe('UAT J — Signup & invite codes', () => {
     // Joined as a resident — no admin tabs.
     await expect(page.getByRole('button', { name: 'Control' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Dashboard' })).toBeVisible()
+    // The signup (createUser) op is the last write of this test.
+    await flushSettled(page)
   })
 })
 

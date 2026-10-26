@@ -61,6 +61,10 @@ export function useLedger(session) {
   // offline, no write access) can never spin the app in a tight retry loop.
   const RETRY_MIN_MS = 15000
   const lastFailedRef = useRef(0)
+  // Set when a doSync call is dropped because one is already in flight. The
+  // in-flight sync's finally block re-runs one more sync afterwards, so a
+  // dropped login sync (and its queued ops) is never starved.
+  const dirtyRef = useRef(false)
   const isFullAdmin = useCallback(() => session?.role === 'admin', [session])
   function enqueue(op, args) {
     const q = loadQueue()
@@ -123,7 +127,14 @@ export function useLedger(session) {
 
   // The main sync: apply queue + push to GitHub.
   const doSync = useCallback(async () => {
-    if (syncing) return
+    if (syncing) {
+      // A sync is already in flight. Mark dirty so it re-runs once it
+      // finishes — otherwise this call (e.g. the login auto-sync that lands
+      // right after a slow login) is silently dropped and queued ops wait
+      // for the next user action.
+      dirtyRef.current = true
+      return
+    }
     setSyncing(true)
     setError(null)
     try {
@@ -162,8 +173,16 @@ export function useLedger(session) {
       lastFailedRef.current = Date.now()
     } finally {
       setSyncing(false)
+      if (dirtyRef.current) {
+        // A doSync was dropped while we were in flight — run one more so its
+        // (possibly larger) queue actually reaches the server.
+        dirtyRef.current = false
+        setTimeout(doSyncRef.current, 300)
+      }
     }
   }, [ledger, syncing])
+  const doSyncRef = useRef(doSync)
+  doSyncRef.current = doSync
 
   // ---- Debounced auto-sync after any user action ----
   // Every action above enqueues to localStorage but does NOT push to GitHub
