@@ -1,19 +1,32 @@
 import { useState } from 'react'
-import { PlaneIcon } from './Icons'
+import { PlaneIcon, CheckIcon } from './Icons'
 
 // Section 4.2: Smart Vacation Mode.
 // A resident selects start/end dates; meals are auto-zeroed for those days.
 export default function VacationMode({ resident, vacations, onAdd, onRemove }) {
   const [start, setStart] = useState('')
   const [end, setEnd] = useState('')
+  const [error, setError] = useState('')
+  const [saved, setSaved] = useState(false)
   const list = vacations?.[resident] || []
 
   const submit = (e) => {
     e.preventDefault()
-    if (!start || !end) return
+    setSaved(false)
+    if (!start || !end) {
+      setError('Pick both a start and an end date.')
+      return
+    }
+    if (end < start) {
+      setError('The end date must be on or after the start date.')
+      return
+    }
+    setError('')
     onAdd(resident, { start, end })
     setStart('')
     setEnd('')
+    setSaved(true)
+    setTimeout(() => setSaved(false), 2500)
   }
 
   return (
@@ -30,16 +43,22 @@ export default function VacationMode({ resident, vacations, onAdd, onRemove }) {
           <input
             type="date"
             value={start}
-            onChange={(e) => setStart(e.target.value)}
+            onChange={(e) => { setStart(e.target.value); setError('') }}
             className="bg-slate-50 border border-slate-300 rounded-lg px-2 py-2 text-sm text-slate-800"
           />
           <input
             type="date"
             value={end}
-            onChange={(e) => setEnd(e.target.value)}
+            onChange={(e) => { setEnd(e.target.value); setError('') }}
             className="bg-slate-50 border border-slate-300 rounded-lg px-2 py-2 text-sm text-slate-800"
           />
         </div>
+        {error && <p className="text-xs text-red-600 font-medium">{error}</p>}
+        {saved && (
+          <p className="text-xs text-emerald-600 font-medium flex items-center gap-1">
+            <CheckIcon size={12} /> Vacation added — meals on those days won't count against you.
+          </p>
+        )}
         <button
           type="submit"
           className="w-full bg-orange-500 hover:bg-orange-600 text-sm font-semibold py-2 rounded-lg text-white"

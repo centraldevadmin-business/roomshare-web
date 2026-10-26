@@ -54,7 +54,7 @@ export default function LoginSignup({ ledger, onLogin, persistUser }) {
         onLogin(user)
       } else {
         // Signup.
-        const check = signupAllowed(users, inviteCode)
+        const check = signupAllowed(users, inviteCode, ledger.house_config)
         if (!check.allowed) {
           setError(check.reason || 'Signup is closed.')
           return
@@ -68,16 +68,13 @@ export default function LoginSignup({ ledger, onLogin, persistUser }) {
           return
         }
         const role = isFirstUser(users) ? 'admin' : 'resident'
-        const newUser = await mkUser(users, {
-          name: name.trim(),
-          username: username.trim(),
-          password,
-          role,
-        })
-        // Persist the new user into the ledger, then log them in.
-        if (persistUser) {
-          await persistUser(ledger, newUser)
-        }
+        const userData = { name: name.trim(), username: username.trim(), password, role }
+        // The ledger hook creates AND persists the account; log the stored
+        // record in. (Creating it here first would insert a second copy with
+        // a different salt + hash.)
+        const newUser = persistUser
+          ? await persistUser(ledger, userData)
+          : await mkUser(users, userData)
         onLogin(newUser)
       }
     } catch (e) {

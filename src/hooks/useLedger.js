@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { sync, fetchFile, pushQueue, applyQueue, forceOverwrite } from '../lib/githubSync.js'
+import { sync, fetchFile, pushQueue, applyQueue, forceOverwrite, seedLedger, clearQueue } from '../lib/githubSync.js'
 import { buildDefaultLedger } from '../lib/types.js'
 import { seedUsers } from '../lib/users.js'
 import { todayStr } from '../lib/logic.js'
@@ -388,6 +388,16 @@ export function useLedger(session) {
     })
   }, [session])
 
+  const deleteAnnouncement = useCallback((id) => {
+    if (session?.role !== 'admin') return
+    enqueue('removeAnnouncement', { id })
+    setLedger((l) => {
+      const next = structuredClone(l)
+      applyQueue(next, [{ op: 'removeAnnouncement', args: { id } }])
+      return next
+    })
+  }, [session])
+
   const updateConfig = useCallback((patch) => {
     if (session?.role !== 'admin') return
     enqueue('updateConfig', { patch })
@@ -422,7 +432,9 @@ export function useLedger(session) {
     next.users = [...users, newUser]
     enqueue('createUser', { user: next.users[next.users.length - 1] })
     setLedger(next)
-    return next.users[next.users.length - 1]
+    // Return the STORED record so callers (e.g. signup) can log it in instead
+    // of a separately-created twin with a different salt.
+    return newUser
   }, [ledger])
 
   const updateUser = useCallback((id, patch) => {
@@ -456,6 +468,33 @@ export function useLedger(session) {
     return plaintext
   }, [ledger])
 
+  // ---- Self-service password change (any signed-in user, their own account) ----
+  // Verifies the CURRENT password against the ledger's stored hash, then sets
+  // a new one with a fresh salt. Unlike changePassword (admin-only, blind
+  // generate), the resident types both values, so nobody needs to hand them
+  // a generated password. Throws on bad current password / weak new password.
+  const changeOwnPassword = useCallback(async (current, nextPassword) => {
+    if (!session) throw new Error('You must be signed in to change your password.')
+    const users = ledger.users || []
+    const me = users.find((u) => u.id === session.id)
+    if (!me) throw new Error('Your account was not found in the house ledger.')
+    const { verifyUserPassword, generateSalt, hashPassword } = await import('../lib/security.js')
+    const ok = await verifyUserPassword(me, current)
+    if (!ok) throw new Error('Current password is wrong.')
+    if (typeof nextPassword !== 'string' || nextPassword.length < 8) {
+      throw new Error('New password must be at least 8 characters.')
+    }
+    const salt = generateSalt()
+    const passwordHash = await hashPassword(nextPassword, salt)
+    enqueue('updateUser', { id: session.id, patch: { salt, passwordHash } })
+    setLedger((l) => {
+      const next = structuredClone(l)
+      next.users = (next.users || []).map((u) => (u.id === session.id ? { ...u, salt, passwordHash } : u))
+      return next
+    })
+    return true
+  }, [session, ledger])
+
   const deleteUser = useCallback((id) => {
     if (!isFullAdmin()) return
     enqueue('deleteUser', { id })
@@ -482,6 +521,19 @@ export function useLedger(session) {
     await forceOverwrite(ledger)
     setLastSync(new Date())
   }, [ledger, session])
+
+  // Restore from a backup file (admin). Writes the GIVEN data to GitHub
+  // (not the current in-memory ledger) and adopts it locally, dropping any
+  // pending local queue ops — a restore means "the backup is the truth".
+  const restoreLedger = useCallback(async (data) => {
+    if (session?.role !== 'admin') return false
+    const next = seedLedger(structuredClone(data))
+    await forceOverwrite(next)
+    clearQueue()
+    setLedger(next)
+    setLastSync(new Date())
+    return true
+  }, [session])
 
   return {
     ledger,
@@ -515,9 +567,12 @@ export function useLedger(session) {
     updateConfig,
     finalizeMonth,
     forceSyncOverwrite,
+    restoreLedger,
     deleteTodo,
     deleteEvent,
+    deleteAnnouncement,
     changePassword,
+    changeOwnPassword,
     createUser,
     updateUser,
     deleteUser,

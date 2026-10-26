@@ -13,6 +13,7 @@ import CommunityScreen from './screens/CommunityScreen'
 import UserManagement from './screens/UserManagement'
 import MaidBoard from './components/MaidBoard'
 import Tutorial from './components/Tutorial'
+import ErrorBoundary from './components/ErrorBoundary'
 import { WarningIcon } from './components/Icons'
 import { ADMIN_TUTORIAL_STEPS, RESIDENT_TUTORIAL_STEPS } from './components/tutorialSteps.js'
 import { registerPushWorker, createPushSubscription, buildSubscriptionRecord } from './lib/pushSubscribe.js'
@@ -33,7 +34,7 @@ const ADMIN_TABS = [
   { id: 'operations', label: 'Ledger Ops' },
 ]
 
-export default function App() {
+export function AppInner() {
   const { session, login, logout, can } = useAuth()
   const { prompt: promptInstall, installed, canPrompt } = useInstallPrompt()
   const [tab, setTab] = useState('dashboard')
@@ -45,9 +46,12 @@ export default function App() {
   // Both the full admin (nafiz) and the co-admin (mohin) start in resident
   // mode — the first page looks like a normal resident dashboard. They flip to
   // admin mode from the menu, exactly like each other.
-  const [adminMode, setAdminMode] = useState(
-    session?.role === 'admin' || session?.role === 'cadmin',
-  )
+  //
+  // Always initialize to resident mode (false) — even when a session is
+  // restored from localStorage on a page reload. Initializing from the session
+  // role (the old behavior) made a fresh login land in resident mode but a
+  // reload land in admin mode, which was confusing and inconsistent.
+  const [adminMode, setAdminMode] = useState(false)
 
   // Show the first-login tutorial exactly once per user. We track it in
   // localStorage keyed by user id so it never reappears after the first time.
@@ -111,15 +115,9 @@ export default function App() {
   }, [session, pushSessionId])
 
   // Persist a newly signed-up user into the ledger before logging them in.
-  const persistUser = async (ledgerData, newUser) => {
-    await ledger.createUser({
-      name: newUser.name,
-      email: newUser.email,
-      username: newUser.username,
-      password: newUser.password,
-      role: newUser.role,
-    })
-  }
+  // Signup persistence: create the account in the ledger (which enqueues it
+  // for sync) and return the stored record so the caller can log it in.
+  const persistUser = async (ledgerData, userData) => ledger.createUser(userData)
 
   const handleLogin = (user) => {
     login(user)
@@ -156,10 +154,11 @@ export default function App() {
     if (!session) return
     let cancelled = false
     // Assign a distinct stagger offset per role so no two roles collide:
-    // admin=0, resident1=2min, resident2=4min, resident3=6min.
+    // admin=0, cadmin=3min, resident=6min. (The old code keyed this on
+    // hardcoded user ids 'admin'/'resident1'/... that no longer exist, so
+    // everyone silently fell through to the 6-minute bucket.)
     const staggerMinutes = session.id === 'admin' ? 0
-      : session.id === 'resident1' ? 2
-      : session.id === 'resident2' ? 4 : 6
+      : session.role === 'cadmin' ? 3 : 6
     const syncTimes = [
       new Date().setHours(4, staggerMinutes, 0, 0),
       new Date().setHours(16, staggerMinutes, 0, 0),
@@ -217,6 +216,7 @@ export default function App() {
             setDepositStatus={ledger.setDepositStatus}
             finalizeMonth={ledger.finalizeMonth}
             forceSyncOverwrite={ledger.forceSyncOverwrite}
+            restoreLedger={ledger.restoreLedger}
             setAnnouncement={ledger.setAnnouncement}
             updateConfig={ledger.updateConfig}
           />
@@ -255,6 +255,7 @@ export default function App() {
             todos={ledger.ledger.todos}
             events={ledger.ledger.calendar_events}
             postAnnouncement={ledger.postAnnouncement}
+            deleteAnnouncement={ledger.deleteAnnouncement}
             addTodo={ledger.addTodo}
             toggleTodo={ledger.toggleTodo}
             deleteTodo={ledger.deleteTodo}
@@ -281,6 +282,7 @@ export default function App() {
           todos={ledger.ledger.todos}
           events={ledger.ledger.calendar_events}
           postAnnouncement={ledger.postAnnouncement}
+          deleteAnnouncement={ledger.deleteAnnouncement}
           addTodo={ledger.addTodo}
           toggleTodo={ledger.toggleTodo}
           deleteTodo={ledger.deleteTodo}
@@ -311,6 +313,7 @@ export default function App() {
         removeVacation={ledger.removeVacation}
         addBazar={ledger.addBazar}
         changePassword={ledger.changePassword}
+        changeOwnPassword={ledger.changeOwnPassword}
       />
     )
   }
@@ -356,5 +359,15 @@ export default function App() {
         <Tutorial steps={isAdmin ? ADMIN_TUTORIAL_STEPS : RESIDENT_TUTORIAL_STEPS} onComplete={finishTutorial} />
       )}
     </>
+  )
+}
+
+// The public entry point: the whole app lives inside an error boundary so a
+// render-time crash shows a friendly reload card instead of a white screen.
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppInner />
+    </ErrorBoundary>
   )
 }

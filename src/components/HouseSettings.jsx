@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { CogIcon, PlusIcon, TrashIcon } from './Icons'
-import { RESIDENT_IDS } from '../lib/users'
+import { activeResidentIds } from '../lib/users'
+import { generateInviteCode } from '../lib/logic'
 
 // Section 3.2 (extended): House Configuration.
 // Admins edit the shared house parameters. Changes are queued and synced to
 // GitHub, then read by the billing logic (meal rate, rent, internet, cutoff
 // hours, bazar interval) and the Excel report.
-export default function HouseSettings({ config, onSave }) {
-  const residents = RESIDENT_IDS
+export default function HouseSettings({ config, users, onSave }) {
+  const residents = activeResidentIds({ users: Array.isArray(users) ? users : undefined })
   const rentByResident = config.rentByResident || {}
   const [form, setForm] = useState({
     currency: config.currency || 'TK',
@@ -20,8 +21,10 @@ export default function HouseSettings({ config, onSave }) {
     rentFreeResident: config.rentFreeResident || '',
     rentByResident: residents.reduce((acc, r) => { acc[r] = rentByResident[r] ?? 0; return acc }, {}),
     fixedCosts: Array.isArray(config.fixedCosts) ? config.fixedCosts : [],
+    inviteCode: config.inviteCode || '',
   })
   const [saved, setSaved] = useState(false)
+  const [inviteCopied, setInviteCopied] = useState(false)
 
   const set = (key) => (e) => {
     const value = e.target.value
@@ -53,6 +56,24 @@ export default function HouseSettings({ config, onSave }) {
     setForm((f) => ({ ...f, rentByResident: { ...f.rentByResident, [r]: Number(value) || 0 } }))
   }
 
+  // Invite code: generate a fresh one, or clear it to close self-signup.
+  // Takes effect when the form is saved (like every other setting).
+  const genInvite = () => {
+    setSaved(false)
+    setInviteCopied(false)
+    setForm((f) => ({ ...f, inviteCode: generateInviteCode() }))
+  }
+  const copyInvite = async () => {
+    if (!form.inviteCode) return
+    try {
+      await navigator.clipboard.writeText(form.inviteCode)
+      setInviteCopied(true)
+      setTimeout(() => setInviteCopied(false), 2000)
+    } catch {
+      // Clipboard may be unavailable (insecure context); ignore.
+    }
+  }
+
   const submit = (e) => {
     e.preventDefault()
     onSave({
@@ -66,6 +87,7 @@ export default function HouseSettings({ config, onSave }) {
       rentFreeResident: form.rentFreeResident || null,
       rentByResident: form.rentByResident,
       fixedCosts: (form.fixedCosts || []).filter((c) => c.name && Number(c.total)).map((c) => ({ name: c.name, total: Number(c.total) })),
+      inviteCode: String(form.inviteCode || '').trim(),
     })
     setSaved(true)
   }
@@ -247,6 +269,48 @@ export default function HouseSettings({ config, onSave }) {
               )}
             </div>
           </div>
+        </div>
+
+        {/* Signup / invite code */}
+        <div className="border-t border-slate-100 pt-3 mt-1 space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="block text-xs text-slate-400">Invite code (self-service signup)</label>
+            <div className="flex gap-1">
+              <button type="button" onClick={genInvite} className="text-[10px] px-2 py-1 rounded-full bg-emerald-100 hover:bg-emerald-200 text-emerald-600 font-semibold">
+                Generate
+              </button>
+              {form.inviteCode && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSaved(false)
+                    setInviteCopied(false)
+                    setForm((f) => ({ ...f, inviteCode: '' }))
+                  }}
+                  className="text-[10px] px-2 py-1 rounded-full bg-red-100 hover:bg-red-200 text-red-600 font-semibold"
+                >
+                  Close signup
+                </button>
+              )}
+            </div>
+          </div>
+          {form.inviteCode ? (
+            <div className="flex items-center gap-2">
+              <input
+                value={form.inviteCode}
+                readOnly
+                className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm font-mono tracking-widest text-slate-800"
+              />
+              <button type="button" onClick={copyInvite} className="shrink-0 text-[10px] px-2 py-2 rounded-lg bg-blue-50 text-blue-600 font-semibold">
+                {inviteCopied ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+          ) : (
+            <p className="text-[10px] text-slate-400">
+              No code published — signup is closed. Generate a code and share it with a new
+              resident so they can create their own account.
+            </p>
+          )}
         </div>
 
         <button

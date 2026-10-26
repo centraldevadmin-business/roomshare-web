@@ -1,5 +1,4 @@
-// Hardcoded house accounts. No login-signup, no user creation.
-// These are the only accounts. Authority is decided by `role`.
+// Hardcoded house accounts — the SEED for a fresh ledger.
 //
 //   Nafiz   — ultimate admin. Full access to everything.
 //   Mohin   — "co-admin" (cadmin). Looks like an admin in the UI, but two
@@ -8,9 +7,9 @@
 //   Neloy   — normal resident.
 //
 // NOTE: These hardcoded accounts are NOT used for login. Login authenticates
-// against the ledger's `users` node (synced from GitHub), whose real passwords
-//   are:  House@Ledger#2026! (all three share one strong password). This block
-//   is kept only as a template for seeding a fresh ledger's users.
+// against the ledger's `users` node (synced from GitHub) via
+// security.js authenticate(). `seedUsers()` below clones this list into a
+// fresh ledger's users so the app is usable out of the box.
 //
 // SECURITY NOTE: This is a client-side PWA with zero cost. Credentials live
 // in the browser bundle, so they are NOT secret — anyone can read them.
@@ -54,36 +53,38 @@ export const USERS = [
   },
 ]
 
-// Verify a login attempt against the hardcoded list.
-//
-// security.js hashes passwords as SHA-256 of the UTF-8 bytes of
-// `${salt}:${password}`. We mirror that EXACT algorithm here so the login
-// screen authenticates against the same hashes. crypto.subtle.digest is
-// async, so authenticate() is async too — same shape as security.js.
-export async function authenticate(username, password) {
-  const normalized = String(username ?? '').trim().toLowerCase()
-  const match = USERS.find(
-    (u) =>
-      u.username.toLowerCase() === normalized &&
-      u.active,
-  )
-  if (!match) return null
-  const data = new TextEncoder().encode(`${match.salt}:${password}`)
-  const buf = await crypto.subtle.digest('SHA-256', data)
-  const hex = [...new Uint8Array(buf)]
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-  if (hex !== match.passwordHash) return null
-  return { id: match.id, username: match.username, name: match.name, role: match.role }
-}
-
-// Residents for meals/settlement = everyone who eats in the house, regardless
-// of role. All three live here, so all three count.
+// Residents for meals/settlement = everyone who eats in the house. All three
+// live here, so all three count.
 export const RESIDENT_IDS = USERS.filter((u) => u.active).map((u) => u.id)
+
+// Active house members who count for meals/settlement — derived from the
+// ledger's `users` node so members added later (Members screen or invite-code
+// signup) are included automatically. Read-only `viewer` accounts do not eat
+// or pay, so they are excluded. Falls back to the three seeded accounts when
+// the users node is missing or empty (legacy/corrupt ledgers).
+export function activeResidentIds(ledger) {
+  const users = ledger && Array.isArray(ledger.users) ? ledger.users : null
+  if (users && users.length) {
+    const ids = users
+      .filter((u) => u && u.active !== false && u.role !== 'viewer')
+      .map((u) => u.id)
+    if (ids.length) return ids
+  }
+  return RESIDENT_IDS
+}
 
 // Deep clone of the hardcoded accounts, for seeding a fresh ledger's `users`
 // node. We clone so that later mutations (createUser, updateUser, etc.) never
 // corrupt the shared template above.
 export function seedUsers() {
   return USERS.map((u) => structuredClone(u))
+}
+
+// Human label for a resident id: the member's display name ("Neloy") when the
+// users node knows them, otherwise the id itself (deleted members, legacy
+// data, or a missing users node). Screens pass the id as the VALUE and this
+// as the LABEL, so billing keys never change — only what people read.
+export function displayNameFor(users, id) {
+  const u = (Array.isArray(users) ? users : []).find((x) => x && x.id === id)
+  return (u && u.name) || id
 }

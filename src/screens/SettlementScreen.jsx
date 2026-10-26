@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import { computeSettlement } from '../lib/logic'
-import { RESIDENT_IDS } from '../lib/users'
+import { activeResidentIds } from '../lib/users'
 import { WalletIcon, CartIcon, HomeIcon, ReceiptIcon, CheckIcon } from '../components/Icons'
 
 // End-of-month settlement screen.
@@ -16,7 +16,8 @@ import { WalletIcon, CartIcon, HomeIcon, ReceiptIcon, CheckIcon } from '../compo
 //   - Final bill (netOwed) = rent + fixedCostShare − surplus, paid in cash.
 export default function SettlementScreen({ ledger }) {
   const config = ledger.house_config
-  const residents = RESIDENT_IDS
+  // Active members from the ledger (new members settle automatically).
+  const residents = activeResidentIds(ledger)
   const names = Object.fromEntries(residents.map((id) => [id, id]))
 
   const settlement = useMemo(

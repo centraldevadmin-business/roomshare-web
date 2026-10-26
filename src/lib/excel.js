@@ -4,7 +4,7 @@
 
 import * as XLSX from 'xlsx'
 import { isOnVacation, computeMealRate, rentForResident, fixedCostShare, utilityShare } from './logic.js'
-import { RESIDENT_IDS } from './users.js'
+import { RESIDENT_IDS, activeResidentIds } from './users.js'
 
 // Compute per-resident final balances for the summary tab.
 //
@@ -28,7 +28,7 @@ export function computeBalances(ledger, residents, mealRate = computeMealRate(le
 
   // Meals charged to a resident (their own + guests they added) — they owe the
   // house, so this REDUCES their balance. Vacation dates are waived.
-  for (const m of ledger.meal_log) {
+  for (const m of ledger.meal_log || []) {
     if (isOnVacation(ledger.vacations, m.resident, m.date)) continue
     const plates = (m.breakfast || 0) + (m.lunch || 0) + (m.dinner || 0)
     const guestPlates = (m.guests?.breakfast || 0) + (m.guests?.lunch || 0) + (m.guests?.dinner || 0)
@@ -44,7 +44,7 @@ export function computeBalances(ledger, residents, mealRate = computeMealRate(le
   }
 
   // Deposits approved = money the resident already handed the admin (credit).
-  for (const d of ledger.deposit_ledger) {
+  for (const d of ledger.deposit_ledger || []) {
     if (d.status === 'approved') bal[d.resident] = (bal[d.resident] || 0) + d.amount
   }
 
@@ -54,20 +54,21 @@ export function computeBalances(ledger, residents, mealRate = computeMealRate(le
 export function buildWorkbook(ledger, residents) {
   const mealRate = computeMealRate(ledger)
   const config = ledger.house_config || {}
-  const rent = rentForResident(config, residents[0]) || 0
   const balances = computeBalances(ledger, residents, mealRate)
 
-  const totalGroceries = ledger.expense_log
+  const totalGroceries = (ledger.expense_log || [])
     .filter((e) => e.type === 'grocery')
     .reduce((s, e) => s + Number(e.amount || 0), 0)
-  const totalUtilities = ledger.expense_log
+  const totalUtilities = (ledger.expense_log || [])
     .filter((e) => e.type === 'utility')
     .reduce((s, e) => s + Number(e.amount || 0), 0)
-  const totalDepositsApproved = ledger.deposit_ledger
+  const totalDepositsApproved = (ledger.deposit_ledger || [])
     .filter((d) => d.status === 'approved')
     .reduce((s, d) => s + Number(d.amount || 0), 0)
 
   // ---- Tab 1: Summary ----
+  // Rent is per-RESIDENT (rentByResident), not a flat number — list each
+  // resident's rent so the report matches what each person actually pays.
   const summary = [
     ['House Ledger — Monthly Summary'],
     ['Generated', new Date().toLocaleString()],
@@ -77,21 +78,24 @@ export function buildWorkbook(ledger, residents) {
     ['Total Utilities', totalUtilities],
     ['Total Approved Deposits', totalDepositsApproved],
     ['Meal Rate (per plate)', mealRate],
-    ['Rent per person', rent],
+    [''],
+    ['Rent (per resident)'],
+    ...residents.map((r) => [r, rentForResident(config, r) || 0]),
     [''],
     ['Resident', 'Final Balance'],
     ...residents.map((r) => [r, balances[r] || 0]),
   ]
 
   // ---- Tab 2: Daily Ledger (who ate what every day) ----
-  const days = collectDays(ledger.meal_log)
+  const mealLog = ledger.meal_log || []
+  const days = collectDays(mealLog)
   const daily = [
     ['House Ledger — Daily Meal Ledger'],
     ['Resident', ...days],
     ...residents.map((r) => {
       const row = [r]
       for (const d of days) {
-        const entry = ledger.meal_log.find((m) => m.resident === r && m.date === d)
+        const entry = mealLog.find((m) => m.resident === r && m.date === d)
         if (!entry) {
           row.push('')
           continue
@@ -108,7 +112,7 @@ export function buildWorkbook(ledger, residents) {
   const expense = [
     ['House Ledger — Expense & Deposit Log'],
     ['Type', 'Date', 'Vendor / Resident', 'Amount', 'Note', 'Status'],
-    ...ledger.expense_log
+    ...(ledger.expense_log || [])
       .slice()
       .sort((a, b) => (a.date < b.date ? 1 : -1))
       .map((e) => [
@@ -122,7 +126,7 @@ export function buildWorkbook(ledger, residents) {
     [''],
     ['DEPOSITS'],
     ['Date', 'Resident', 'Amount', 'Note', 'Status'],
-    ...ledger.deposit_ledger
+    ...(ledger.deposit_ledger || [])
       .slice()
       .sort((a, b) => (a.date < b.date ? 1 : -1))
       .map((d) => [d.date, d.resident, d.amount, d.note || '', d.status]),
@@ -139,7 +143,7 @@ export function buildWorkbook(ledger, residents) {
 }
 
 function collectDays(mealLog) {
-  const set = new Set(mealLog.map((m) => m.date))
+  const set = new Set((mealLog || []).map((m) => m.date))
   return Array.from(set).sort()
 }
 
@@ -170,7 +174,7 @@ export function exportAndShare(ledger, residents, filename) {
 // Builds a workbook for ONE resident: their meals, their charges (rent, fixed
 // costs, utilities), their deposits, and a final net balance. Everyone gets
 // their own full breakdown — "mohin gets his, niloy gets his."
-export function buildPersonWorkbook(ledger, resident, residents = RESIDENT_IDS) {
+export function buildPersonWorkbook(ledger, resident, residents = activeResidentIds(ledger)) {
   const mealRate = computeMealRate(ledger)
   const config = ledger.house_config || {}
   const { perPerson: fixedShare } = fixedCostShare(config, residents.length)
@@ -258,7 +262,7 @@ export function buildPersonWorkbook(ledger, resident, residents = RESIDENT_IDS) 
 }
 
 // Download a single resident's full breakdown.
-export function exportPersonWorkbook(ledger, resident, residents = RESIDENT_IDS) {
+export function exportPersonWorkbook(ledger, resident, residents = activeResidentIds(ledger)) {
   const wb = buildPersonWorkbook(ledger, resident, residents)
   const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' })
   const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })

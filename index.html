@@ -5,9 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <meta name="theme-color" content="#0f172a" />
     <meta name="description" content="Household meal & expense tracker" />
+    <!-- iOS / Android home-screen support: without the apple-touch-icon PNG,
+         iOS shows a blank/low-res icon when the app is added to Home Screen. -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="House Ledger" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <title>House Ledger</title>
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="./manifest.webmanifest" />
   </head>
   <body>
     <div id="root"></div>

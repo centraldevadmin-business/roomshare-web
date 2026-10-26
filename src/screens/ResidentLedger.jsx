@@ -1,13 +1,17 @@
 import { useMemo, useState } from 'react'
-import { todayStr, computeDebt, uniqueId } from '../lib/logic'
-import { RESIDENT_IDS } from '../lib/users'
+import { todayStr, computeDebt, computeMealRate, uniqueId } from '../lib/logic'
+import { activeResidentIds, displayNameFor } from '../lib/users'
 import { exportPersonWorkbook } from '../lib/excel'
 import { CheckIcon, WalletIcon, DownloadIcon } from '../components/Icons'
 
 // Section: Resident Ledger — read-only financial standing + deposit request form.
 export default function ResidentLedger({ session, ledger, addDeposit }) {
   const config = ledger.house_config
-  const mealRate = config.mealRate || 70
+  // COMPUTED meal rate (groceries ÷ meals), the same number the Dashboard
+  // debt card and the Excel reports use. (The old code used the static
+  // config.mealRate here, so this tab disagreed with the Dashboard whenever
+  // grocery spending had moved the real rate.)
+  const mealRate = computeMealRate(ledger)
   const today = todayStr()
 
   // Personal balance (positive = house owes you; negative = you owe the house).
@@ -16,11 +20,11 @@ export default function ResidentLedger({ session, ledger, addDeposit }) {
     [ledger, session.id, mealRate]
   )
 
-  // Outstanding balances for all residents (positive = house owes them).
+  // Outstanding balances for all active members.
   const outstanding = useMemo(() => {
     const rows = []
-    for (const r of RESIDENT_IDS) {
-      rows.push({ id: r, name: r, balance: computeDebt(ledger, r, mealRate) })
+    for (const r of activeResidentIds(ledger)) {
+      rows.push({ id: r, name: displayNameFor(ledger.users, r), balance: computeDebt(ledger, r, mealRate) })
     }
     return rows
   }, [ledger, mealRate])
@@ -28,9 +32,16 @@ export default function ResidentLedger({ session, ledger, addDeposit }) {
   // Deposit request form.
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
+  const [formError, setFormError] = useState('')
+  const [sent, setSent] = useState(false)
   const submitDeposit = (e) => {
     e.preventDefault()
-    if (!amount || Number(amount) <= 0) return
+    setSent(false)
+    if (!amount || Number(amount) <= 0 || Number.isNaN(Number(amount))) {
+      setFormError('Enter an amount greater than zero.')
+      return
+    }
+    setFormError('')
     addDeposit({
       id: uniqueId('dep'),
       resident: session.id,
@@ -41,10 +52,12 @@ export default function ResidentLedger({ session, ledger, addDeposit }) {
     })
     setAmount('')
     setNote('')
+    setSent(true)
+    setTimeout(() => setSent(false), 3000)
   }
 
   // My deposits.
-  const myDeposits = ledger.deposit_ledger
+  const myDeposits = (ledger.deposit_ledger || [])
     .filter((d) => d.resident === session.id)
     .sort((a, b) => (a.date < b.date ? 1 : -1))
 
@@ -121,7 +134,7 @@ export default function ResidentLedger({ session, ledger, addDeposit }) {
           <input
             type="number"
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
+            onChange={(e) => { setAmount(e.target.value); setFormError('') }}
             placeholder="Amount"
             className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400"
           />
@@ -131,9 +144,15 @@ export default function ResidentLedger({ session, ledger, addDeposit }) {
             placeholder='Note: e.g. "Handed 500 for Bazar"'
             className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3 py-2 text-sm text-slate-800 placeholder:text-slate-400"
           />
+          {formError && <p className="text-xs text-red-600 font-medium">{formError}</p>}
           <button className="w-full bg-orange-500 hover:bg-orange-600 text-sm font-semibold py-2 rounded-lg text-white">
             Submit Deposit Request
           </button>
+          {sent && (
+            <p className="text-xs text-emerald-600 font-medium flex items-center gap-1">
+              <CheckIcon size={12} /> Request sent — the admin will verify it in the Deposit Inbox.
+            </p>
+          )}
         </form>
       </div>
 

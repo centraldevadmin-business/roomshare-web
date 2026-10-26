@@ -4,9 +4,12 @@ import assert from 'node:assert'
 
 let passed = 0
 let failed = 0
-function test(name, fn) {
+// AWAIT the test body: several tests are async (crypto.subtle). The old
+// harness never awaited, so async failures were silently swallowed and
+// counted as passes.
+async function test(name, fn) {
   try {
-    fn()
+    await fn()
     passed++
     console.log(`  ✓ ${name}`)
   } catch (e) {
@@ -17,42 +20,43 @@ function test(name, fn) {
 }
 
 console.log('\n=== users.js ===')
-const { authenticate, USERS, RESIDENT_IDS } = await import('../src/lib/users.js')
+const { USERS, RESIDENT_IDS, seedUsers, activeResidentIds } = await import('../src/lib/users.js')
 
-test('authenticate valid resident', async () => {
-  const u = await authenticate('neloy', 'Neloy!Meal@2026#Tasty')
-  assert.equal(u.name, 'Neloy')
-  assert.equal(u.role, 'resident')
-})
-test('authenticate valid admin', async () => {
-  const u = await authenticate('nafiz', 'Nafiz!Ledger@2026#Secure')
-  assert.equal(u.role, 'admin')
-})
-test('authenticate cadmin (mohin)', async () => {
-  const u = await authenticate('mohin', 'Mohin!Bazar@2026#Fresh')
-  assert.equal(u.role, 'cadmin')
-})
-test('authenticate wrong password', async () => {
-  assert.equal(await authenticate('neloy', 'wrong'), null)
-})
-test('authenticate wrong username', async () => {
-  assert.equal(await authenticate('nobody', 'Neloy!Meal@2026#Tasty'), null)
-})
-test('authenticate is case-insensitive on username', async () => {
-  const u = await authenticate('NELOY', 'Neloy!Meal@2026#Tasty')
-  assert.equal(u.id, 'neloy')
-})
-test('RESIDENT_IDS has 3 ids', () => {
+await test('RESIDENT_IDS has 3 ids', () => {
   assert.equal(RESIDENT_IDS.length, 3)
   assert.ok(RESIDENT_IDS.includes('neloy'))
   assert.ok(RESIDENT_IDS.includes('nafiz'))
   assert.ok(RESIDENT_IDS.includes('mohin'))
 })
-test('USERS has the three house accounts', () => {
+await test('USERS has the three house accounts', () => {
   const names = USERS.map((u) => u.name)
   assert.ok(names.includes('Nafiz'))
   assert.ok(names.includes('Mohin'))
   assert.ok(names.includes('Neloy'))
+})
+await test('seedUsers returns a deep clone (mutating it never touches the template)', () => {
+  const a = seedUsers()
+  a[0].name = 'HACKED'
+  a.push({ id: 'extra' })
+  const b = seedUsers()
+  assert.equal(b[0].name, 'Nafiz')
+  assert.equal(b.length, 3)
+})
+await test('activeResidentIds falls back to the 3 seeded ids without a users node', () => {
+  assert.deepEqual(activeResidentIds({}), RESIDENT_IDS)
+  assert.deepEqual(activeResidentIds(null), RESIDENT_IDS)
+})
+await test('activeResidentIds derives members from the ledger users node', () => {
+  const l = {
+    users: [
+      { id: 'nafiz', active: true, role: 'admin' },
+      { id: 'neloy', active: true, role: 'resident' },
+      { id: 'newbie', active: true, role: 'resident' },
+      { id: 'ghost', active: false, role: 'resident' }, // deactivated
+      { id: 'watcher', active: true, role: 'viewer' },  // read-only, does not eat
+    ],
+  }
+  assert.deepEqual(activeResidentIds(l), ['nafiz', 'neloy', 'newbie'])
 })
 
 console.log('\n=== logic.js ===')
@@ -73,56 +77,56 @@ const {
   eventsOnDate,
 } = await import('../src/lib/logic.js')
 
-test('isSlotLocked: breakfast locked after 9pm', () => {
+await test('isSlotLocked: breakfast locked after 9pm', () => {
   const late = new Date(2026, 7, 23, 21, 30)
   assert.equal(isSlotLocked('breakfast', late), true)
 })
-test('isSlotLocked: lunch locked after 9pm', () => {
+await test('isSlotLocked: lunch locked after 9pm', () => {
   const late = new Date(2026, 7, 23, 22, 0)
   assert.equal(isSlotLocked('lunch', late), true)
 })
-test('isSlotLocked: dinner locked after 4pm', () => {
+await test('isSlotLocked: dinner locked after 4pm', () => {
   const evening = new Date(2026, 7, 23, 21, 0)
   assert.equal(isSlotLocked('dinner', evening), true)
 })
-test('isSlotLocked: dinner NOT locked before 4pm', () => {
+await test('isSlotLocked: dinner NOT locked before 4pm', () => {
   const afternoon = new Date(2026, 7, 23, 15, 0)
   assert.equal(isSlotLocked('dinner', afternoon), false)
 })
-test('isSlotLocked: all open before 4pm', () => {
+await test('isSlotLocked: all open before 4pm', () => {
   const early = new Date(2026, 7, 23, 8, 0)
   assert.equal(isSlotLocked('breakfast', early), false)
   assert.equal(isSlotLocked('lunch', early), false)
   assert.equal(isSlotLocked('dinner', early), false)
 })
-test('isSlotLocked: dinner locks at 4pm, breakfast/lunch at 9pm', () => {
+await test('isSlotLocked: dinner locks at 4pm, breakfast/lunch at 9pm', () => {
   const evening = new Date(2026, 7, 23, 21, 0)
   assert.equal(isSlotLocked('breakfast', evening), true)
   assert.equal(isSlotLocked('lunch', evening), true)
   assert.equal(isSlotLocked('dinner', evening), true)
 })
-test('debtStatus: green for +500+', () => {
+await test('debtStatus: green for +500+', () => {
   assert.equal(debtStatus(600).tone, 'green')
 })
-test('debtStatus: grey for 0', () => {
+await test('debtStatus: grey for 0', () => {
   assert.equal(debtStatus(0).tone, 'grey')
 })
-test('debtStatus: grey for -500 (neutral zone)', () => {
+await test('debtStatus: grey for -500 (neutral zone)', () => {
   assert.equal(debtStatus(-500).tone, 'grey')
 })
-test('debtStatus: yellow for approaching -1000', () => {
+await test('debtStatus: yellow for approaching -1000', () => {
   assert.equal(debtStatus(-1500).tone, 'yellow')
 })
-test('debtStatus: flash-red for exceeding -2000', () => {
+await test('debtStatus: flash-red for exceeding -2000', () => {
   assert.equal(debtStatus(-2500).tone, 'flash-red')
 })
-test('debtStatus: flash-red shows severe label', () => {
+await test('debtStatus: flash-red shows severe label', () => {
   assert.equal(debtStatus(-2500).label, 'Severely Behind')
 })
-test('debtStatus: yellow shows attention label', () => {
+await test('debtStatus: yellow shows attention label', () => {
   assert.equal(debtStatus(-1500).label, 'Attention')
 })
-test('bazarDuty: deterministic rotation', () => {
+await test('bazarDuty: deterministic rotation', () => {
   const residents = ['resident1', 'resident2', 'resident3']
   const d1 = bazarDuty(residents, new Date(2026, 0, 1), 3)
   const d2 = bazarDuty(residents, new Date(2026, 0, 2), 3)
@@ -131,50 +135,50 @@ test('bazarDuty: deterministic rotation', () => {
   assert.ok(residents.includes(d2))
   assert.ok(residents.includes(d3))
 })
-test('bazarDuty: shifts every 3 days', () => {
+await test('bazarDuty: shifts every 3 days', () => {
   const residents = ['resident1', 'resident2', 'resident3']
   const day1 = bazarDuty(residents, new Date(2026, 0, 1), 3)
   const day4 = bazarDuty(residents, new Date(2026, 0, 4), 3)
   assert.notEqual(day1, day4)
 })
-test('isOnVacation: within range returns true', () => {
+await test('isOnVacation: within range returns true', () => {
   const vac = { resident1: [{ start: '2026-08-01', end: '2026-08-10' }] }
   assert.equal(isOnVacation(vac, 'resident1', '2026-08-05'), true)
 })
-test('isOnVacation: outside range returns false', () => {
+await test('isOnVacation: outside range returns false', () => {
   const vac = { resident1: [{ start: '2026-08-01', end: '2026-08-10' }] }
   assert.equal(isOnVacation(vac, 'resident1', '2026-08-20'), false)
 })
-test('isOnVacation: other resident false', () => {
+await test('isOnVacation: other resident false', () => {
   const vac = { resident1: [{ start: '2026-08-01', end: '2026-08-10' }] }
   assert.equal(isOnVacation(vac, 'resident2', '2026-08-05'), false)
 })
-test('mealCount: plates + guests', () => {
+await test('mealCount: plates + guests', () => {
   const e = { breakfast: 1, lunch: 1, dinner: 0, guests: { breakfast: 1, lunch: 0, dinner: 2 } }
   assert.equal(mealCount(e), 5)
 })
-test('mealCount: empty entry is 0', () => {
+await test('mealCount: empty entry is 0', () => {
   assert.equal(mealCount(null), 0)
 })
-test('todayStr: returns YYYY-MM-DD for given date', () => {
+await test('todayStr: returns YYYY-MM-DD for given date', () => {
   const s = todayStr(new Date(2026, 7, 23))
   assert.equal(s, '2026-08-23')
 })
-test('todayStr: defaults to current date', () => {
+await test('todayStr: defaults to current date', () => {
   const s = todayStr()
   assert.match(s, /^\d{4}-\d{2}-\d{2}$/)
 })
-test('daysInMonth: August has 31', () => {
+await test('daysInMonth: August has 31', () => {
   assert.equal(daysInMonth(2026, 7), 31)
 })
-test('daysInMonth: Feb 2026 has 28', () => {
+await test('daysInMonth: Feb 2026 has 28', () => {
   assert.equal(daysInMonth(2026, 1), 28)
 })
-test('monthLabel: returns month name + year', () => {
+await test('monthLabel: returns month name + year', () => {
   assert.equal(monthLabel(2026, 7), 'August 2026')
 })
 
-test('computeMealRate: groceries ÷ total meals', () => {
+await test('computeMealRate: groceries ÷ total meals', () => {
   const ledger = {
     house_config: { mealRate: 70 },
     expense_log: [{ type: 'grocery', amount: 1000 }],
@@ -186,7 +190,7 @@ test('computeMealRate: groceries ÷ total meals', () => {
   // 1000 groceries / 6 meals = 166.67 → rounds to 167
   assert.equal(computeMealRate(ledger), 167)
 })
-test('computeMealRate: falls back to config when no meals', () => {
+await test('computeMealRate: falls back to config when no meals', () => {
   const ledger = {
     house_config: { mealRate: 75 },
     expense_log: [{ type: 'grocery', amount: 500 }],
@@ -194,7 +198,7 @@ test('computeMealRate: falls back to config when no meals', () => {
   }
   assert.equal(computeMealRate(ledger), 75)
 })
-test('computeMealRate: falls back to config when meals exist but no groceries', () => {
+await test('computeMealRate: falls back to config when meals exist but no groceries', () => {
   // Regression: previously this computed 0/total = 0 (clamped to 1 TK). It
   // must fall back to the configured rate instead.
   const ledger = {
@@ -207,7 +211,7 @@ test('computeMealRate: falls back to config when meals exist but no groceries', 
   }
   assert.equal(computeMealRate(ledger), 70)
 })
-test('computeDebt: meals owed subtracted from deposits', () => {
+await test('computeDebt: meals owed subtracted from deposits', () => {
   const ledger = {
     house_config: { mealRate: 70, rentByResident: { resident1: 880, resident2: 880 }, _residentCount: 3 },
     meal_log: [
@@ -220,7 +224,7 @@ test('computeDebt: meals owed subtracted from deposits', () => {
   // resident1: 3*70=210 owed meals + 880 rent - 500 deposit = 590 owed
   assert.ok(Math.abs(computeDebt(ledger, 'resident1', 70) - (-590)) < 0.5)
 })
-test('computeDebt: positive when house owes you', () => {
+await test('computeDebt: positive when house owes you', () => {
   const ledger = {
     house_config: { mealRate: 70, rentPerPerson: 0, internetPerPerson: 0, _residentCount: 3 },
     meal_log: [],
@@ -233,29 +237,29 @@ test('computeDebt: positive when house owes you', () => {
 console.log('\n=== types.js ===')
 const { buildDefaultLedger, emptyMealEntry, emptyExpense, emptyDeposit } = await import('../src/lib/types.js')
 
-test('buildDefaultLedger: has 4 nodes', () => {
+await test('buildDefaultLedger: has 4 nodes', () => {
   const l = buildDefaultLedger()
   assert.ok(l.house_config)
   assert.ok(Array.isArray(l.meal_log))
   assert.ok(Array.isArray(l.expense_log))
   assert.ok(Array.isArray(l.deposit_ledger))
 })
-test('buildDefaultLedger: meal_log is empty array', () => {
+await test('buildDefaultLedger: meal_log is empty array', () => {
   const l = buildDefaultLedger()
   assert.equal(l.meal_log.length, 0)
 })
-test('emptyMealEntry: correct shape', () => {
+await test('emptyMealEntry: correct shape', () => {
   const e = emptyMealEntry('resident1', '2026-08-23')
   assert.equal(e.resident, 'resident1')
   assert.equal(e.breakfast, 0)
   assert.equal(e.guests.lunch, 0)
 })
-test('emptyExpense: has id + locked false', () => {
+await test('emptyExpense: has id + locked false', () => {
   const e = emptyExpense('x1', '2026-08-23')
   assert.equal(e.id, 'x1')
   assert.equal(e.locked, false)
 })
-test('emptyDeposit: status pending', () => {
+await test('emptyDeposit: status pending', () => {
   const d = emptyDeposit('d1', 'resident1')
   assert.equal(d.status, 'pending')
 })
@@ -263,7 +267,7 @@ test('emptyDeposit: status pending', () => {
 console.log('\n=== excel.js (computeBalances) ===')
 const { computeBalances, buildWorkbook } = await import('../src/lib/excel.js')
 
-test('computeBalances: meals + rent - deposits (positive = house owes resident)', () => {
+await test('computeBalances: meals + rent - deposits (positive = house owes resident)', () => {
   const ledger = {
     house_config: { mealRate: 70, rentByResident: { resident1: 880, resident2: 880 } },
     meal_log: [
@@ -279,7 +283,7 @@ test('computeBalances: meals + rent - deposits (positive = house owes resident)'
   // resident2: -880 rent = -880 (owes house)
   assert.equal(bal.resident2, -880)
 })
-test('computeBalances: rejected deposits do not credit', () => {
+await test('computeBalances: rejected deposits do not credit', () => {
   const ledger = {
     house_config: { mealRate: 70, rentByResident: { resident1: 0 } },
     meal_log: [],
@@ -289,7 +293,7 @@ test('computeBalances: rejected deposits do not credit', () => {
   const bal = computeBalances(ledger, ['resident1'])
   assert.equal(bal.resident1, 0)
 })
-test('buildWorkbook: returns workbook with 3 sheets', () => {
+await test('buildWorkbook: returns workbook with 3 sheets', () => {
   const ledger = buildDefaultLedger()
   const wb = buildWorkbook(ledger, ['resident1', 'resident2'])
   assert.ok(wb.SheetNames)
@@ -302,13 +306,13 @@ test('buildWorkbook: returns workbook with 3 sheets', () => {
 console.log('\n=== logic.js (settlement) ===')
 const { computeSettlement, weightedMealCount } = await import('../src/lib/logic.js')
 
-test('weightedMealCount: breakfast 0.5, lunch/dinner 1', () => {
+await test('weightedMealCount: breakfast 0.5, lunch/dinner 1', () => {
   assert.equal(weightedMealCount({ breakfast: 1, lunch: 1, dinner: 1 }), 2.5)
   assert.equal(weightedMealCount({ breakfast: 2, lunch: 0, dinner: 0 }), 1)
   assert.equal(weightedMealCount(null), 0)
 })
 
-test('computeSettlement: cost_per_meal = groceries / weighted meals', () => {
+await test('computeSettlement: cost_per_meal = groceries / weighted meals', () => {
   const ledger = {
     house_config: { mealRate: 70, rentPerPerson: 7000 },
     expense_log: [{ type: 'grocery', amount: 5000, paid_by: 'resident1' }],
@@ -324,7 +328,7 @@ test('computeSettlement: cost_per_meal = groceries / weighted meals', () => {
   assert.equal(s.totalGroceries, 5000)
 })
 
-test('computeSettlement: surplus deducts from rent, 3rd person rent-free', () => {
+await test('computeSettlement: surplus deducts from rent, 3rd person rent-free', () => {
   const ledger = {
     house_config: { mealRate: 70, rentPerPerson: 7000, rentFreeResident: 'resident3' },
     expense_log: [
@@ -348,7 +352,7 @@ test('computeSettlement: surplus deducts from rent, 3rd person rent-free', () =>
   assert.equal(s.perPerson.resident3.rent, 0)
 })
 
-test('computeSettlement: fixed costs split across all, surplus deducts from them', () => {
+await test('computeSettlement: fixed costs split across all, surplus deducts from them', () => {
   const ledger = {
     house_config: {
       mealRate: 70,
@@ -372,7 +376,7 @@ test('computeSettlement: fixed costs split across all, surplus deducts from them
   assert.ok(Math.abs(s.perPerson.resident1.netOwed - 7000) < 1)
 })
 
-test('computeSettlement: underpayment adds to what they owe', () => {
+await test('computeSettlement: underpayment adds to what they owe', () => {
   const ledger = {
     house_config: { mealRate: 70, rentPerPerson: 7000 },
     expense_log: [{ type: 'grocery', amount: 1000, paid_by: 'resident1' }],
@@ -392,7 +396,7 @@ test('computeSettlement: underpayment adds to what they owe', () => {
   assert.ok(Math.abs(s.perPerson.resident2.netOwed - 8000) < 1)
 })
 
-test('computeSettlement: surplus beyond rent + fixed carries forward', () => {
+await test('computeSettlement: surplus beyond rent + fixed carries forward', () => {
   const ledger = {
     house_config: {
       mealRate: 70,
@@ -413,7 +417,7 @@ test('computeSettlement: surplus beyond rent + fixed carries forward', () => {
   assert.ok(Math.abs(s.perPerson.resident1.carriedForward - 8250) < 1)
 })
 
-test('computeSettlement: per-person rent + variable utilities split equally', () => {
+await test('computeSettlement: per-person rent + variable utilities split equally', () => {
   const ledger = {
     house_config: {
       mealRate: 70,
@@ -448,27 +452,27 @@ test('computeSettlement: per-person rent + variable utilities split equally', ()
 console.log('\n=== githubSync.js (applyQueue) ===')
 const { applyQueue, seedLedger } = await import('../src/lib/githubSync.js')
 
-test('applyQueue: toggleMeal creates entry', () => {
+await test('applyQueue: toggleMeal creates entry', () => {
   const l = buildDefaultLedger()
   applyQueue(l, [{ op: 'toggleMeal', args: { resident: 'resident1', date: '2026-08-23', slot: 'breakfast', value: true } }])
   const entry = l.meal_log.find((m) => m.resident === 'resident1' && m.date === '2026-08-23')
   assert.ok(entry)
   assert.equal(entry.breakfast, 1)
 })
-test('applyQueue: toggleMeal off sets to 0', () => {
+await test('applyQueue: toggleMeal off sets to 0', () => {
   const l = buildDefaultLedger()
   applyQueue(l, [{ op: 'toggleMeal', args: { resident: 'resident1', date: '2026-08-23', slot: 'breakfast', value: true } }])
   applyQueue(l, [{ op: 'toggleMeal', args: { resident: 'resident1', date: '2026-08-23', slot: 'breakfast', value: false } }])
   const entry = l.meal_log.find((m) => m.resident === 'resident1' && m.date === '2026-08-23')
   assert.equal(entry.breakfast, 0)
 })
-test('applyQueue: addExpense appends', () => {
+await test('applyQueue: addExpense appends', () => {
   const l = buildDefaultLedger()
   applyQueue(l, [{ op: 'addExpense', args: { expense: { id: 'e1', date: '2026-08-23', type: 'grocery', vendor: 'Whole Foods', amount: 500, note: '', locked: false } } }])
   assert.equal(l.expense_log.length, 1)
   assert.equal(l.expense_log[0].vendor, 'Whole Foods')
 })
-test('applyQueue: updateExpense patches', () => {
+await test('applyQueue: updateExpense patches', () => {
   const l = buildDefaultLedger()
   applyQueue(l, [{ op: 'addExpense', args: { expense: { id: 'e1', date: '2026-08-23', type: 'grocery', vendor: 'Wrong', amount: 5000, note: '', locked: false } } }])
   applyQueue(l, [{ op: 'updateExpense', args: { id: 'e1', patch: { vendor: 'Right', amount: 500 } } }])
@@ -476,19 +480,19 @@ test('applyQueue: updateExpense patches', () => {
   assert.equal(e.vendor, 'Right')
   assert.equal(e.amount, 500)
 })
-test('applyQueue: deleteExpense removes', () => {
+await test('applyQueue: deleteExpense removes', () => {
   const l = buildDefaultLedger()
   applyQueue(l, [{ op: 'addExpense', args: { expense: { id: 'e1', date: '2026-08-23', type: 'grocery', vendor: 'X', amount: 1, note: '', locked: false } } }])
   applyQueue(l, [{ op: 'deleteExpense', args: { id: 'e1' } }])
   assert.equal(l.expense_log.length, 0)
 })
-test('applyQueue: setDepositStatus updates', () => {
+await test('applyQueue: setDepositStatus updates', () => {
   const l = buildDefaultLedger()
   applyQueue(l, [{ op: 'addDeposit', args: { deposit: { id: 'd1', resident: 'resident1', amount: 500, date: '2026-08-23', note: '', status: 'pending' } } }])
   applyQueue(l, [{ op: 'setDepositStatus', args: { id: 'd1', status: 'approved' } }])
   assert.equal(l.deposit_ledger[0].status, 'approved')
 })
-test('applyQueue: setAnnouncement appends (does not wipe community posts)', () => {
+await test('applyQueue: setAnnouncement appends (does not wipe community posts)', () => {
   const l = buildDefaultLedger()
   // A resident post already exists in the shared feed.
   applyQueue(l, [{ op: 'postAnnouncement', args: { text: 'resident note', by: 'neloy' } }])
@@ -498,19 +502,40 @@ test('applyQueue: setAnnouncement appends (does not wipe community posts)', () =
   assert.equal(l.announcements[0].text, 'Maid absent tomorrow')
   assert.equal(l.announcements[1].text, 'resident note')
 })
-test('applyQueue: updateConfig merges', () => {
+await test('applyQueue: updateConfig merges', () => {
   const l = buildDefaultLedger()
   applyQueue(l, [{ op: 'updateConfig', args: { patch: { mealRate: 75 } } }])
   assert.equal(l.house_config.mealRate, 75)
   assert.equal(l.house_config.rentPerPerson, buildDefaultLedger().house_config.rentPerPerson)
 })
-test('applyQueue: addVacation creates list', () => {
+await test('applyQueue: addVacation creates list', () => {
   const l = buildDefaultLedger()
   applyQueue(l, [{ op: 'addVacation', args: { resident: 'resident1', start: '2026-08-01', end: '2026-08-10' } }])
   assert.ok(l.vacations.resident1)
   assert.equal(l.vacations.resident1.length, 1)
 })
-test('applyQueue: removeVacation removes by index', () => {
+await test('applyQueue: setGuests clamps at zero (never negative)', () => {
+  const l = buildDefaultLedger()
+  applyQueue(l, [{ op: 'setGuests', args: { resident: 'resident1', date: '2026-08-23', slot: 'lunch', value: 3 } }])
+  applyQueue(l, [{ op: 'setGuests', args: { resident: 'resident1', date: '2026-08-23', slot: 'lunch', value: -2 } }])
+  const e = l.meal_log.find((m) => m.resident === 'resident1')
+  assert.equal(e.guests.lunch, 0)
+})
+await test('applyQueue: addVacation rejects inverted or missing ranges', () => {
+  const l = buildDefaultLedger()
+  applyQueue(l, [{ op: 'addVacation', args: { resident: 'resident1', start: '2026-08-10', end: '2026-08-01' } }])
+  applyQueue(l, [{ op: 'addVacation', args: { resident: 'resident1', start: '2026-08-01', end: '' } }])
+  assert.equal(l.vacations?.resident1?.length ?? 0, 0)
+})
+await test('applyQueue: removeAnnouncement deletes by id', () => {
+  const l = buildDefaultLedger()
+  applyQueue(l, [{ op: 'postAnnouncement', args: { text: 'first', by: 'Neloy' } }])
+  applyQueue(l, [{ op: 'postAnnouncement', args: { text: 'second', by: 'Mohin' } }])
+  applyQueue(l, [{ op: 'removeAnnouncement', args: { id: l.announcements[1].id } }])
+  assert.equal(l.announcements.length, 1)
+  assert.equal(l.announcements[0].text, 'second')
+})
+await test('applyQueue: removeVacation removes by index', () => {
   const l = buildDefaultLedger()
   applyQueue(l, [{ op: 'addVacation', args: { resident: 'resident1', start: '2026-08-01', end: '2026-08-10' } }])
   applyQueue(l, [{ op: 'addVacation', args: { resident: 'resident1', start: '2026-09-01', end: '2026-09-05' } }])
@@ -518,7 +543,7 @@ test('applyQueue: removeVacation removes by index', () => {
   assert.equal(l.vacations.resident1.length, 1)
   assert.equal(l.vacations.resident1[0].start, '2026-09-01')
 })
-test('applyQueue: finalizeMonth zeroes meals + carries balances', () => {
+await test('applyQueue: finalizeMonth zeroes meals + carries balances', () => {
   const l = buildDefaultLedger()
   l.house_config.cutoffDay = 1 // allow finalize regardless of current day
   applyQueue(l, [{ op: 'addExpense', args: { expense: { id: 'e1', date: '2026-08-23', type: 'grocery', vendor: 'X', amount: 1, note: '', locked: false } } }])
@@ -526,7 +551,7 @@ test('applyQueue: finalizeMonth zeroes meals + carries balances', () => {
   assert.equal(l.meal_log.length, 0)
   assert.equal(l.balances.resident1, 100)
 })
-test('applyQueue: finalizeMonth is gated by cutoffDay (blocks premature close)', () => {
+await test('applyQueue: finalizeMonth is gated by cutoffDay (blocks premature close)', () => {
   // Mock the clock to a fixed early-month date so the cutoffDay gate blocks
   // deterministically regardless of when the test runs.
   const RealDate = Date
@@ -548,7 +573,7 @@ test('applyQueue: finalizeMonth is gated by cutoffDay (blocks premature close)',
     globalThis.Date = RealDate
   }
 })
-test('canFinalizeMonth: blocks before cutoffDay, allows on/after', () => {
+await test('canFinalizeMonth: blocks before cutoffDay, allows on/after', () => {
   const l = buildDefaultLedger()
   l.house_config.cutoffDay = 28
   // Fixed clock at day 24 — gate should block.
@@ -557,7 +582,7 @@ test('canFinalizeMonth: blocks before cutoffDay, allows on/after', () => {
   l.house_config.cutoffDay = 1
   assert.equal(canFinalizeMonth(l, fixed).ok, true)
 })
-test('applyQueue: postAnnouncement appends newest first', () => {
+await test('applyQueue: postAnnouncement appends newest first', () => {
   const l = buildDefaultLedger()
   applyQueue(l, [{ op: 'postAnnouncement', args: { text: 'No gas', by: 'Resident 1' } }])
   applyQueue(l, [{ op: 'postAnnouncement', args: { text: 'No water', by: 'Resident 2' } }])
@@ -566,13 +591,13 @@ test('applyQueue: postAnnouncement appends newest first', () => {
   assert.equal(l.announcements[0].by, 'Resident 2')
   assert.equal(l.announcements[1].text, 'No gas')
 })
-test('applyQueue: addTodo appends', () => {
+await test('applyQueue: addTodo appends', () => {
   const l = buildDefaultLedger()
   applyQueue(l, [{ op: 'addTodo', args: { todo: { id: 't1', text: 'Take out trash', done: false, priority: 'normal', due: '', createdBy: '' } } }])
   assert.equal(l.todos.length, 1)
   assert.equal(l.todos[0].text, 'Take out trash')
 })
-test('applyQueue: toggleTodo flips done', () => {
+await test('applyQueue: toggleTodo flips done', () => {
   const l = buildDefaultLedger()
   applyQueue(l, [{ op: 'addTodo', args: { todo: { id: 't1', text: 'Mop floor', done: false, priority: 'normal', due: '', createdBy: '' } } }])
   applyQueue(l, [{ op: 'toggleTodo', args: { id: 't1' } }])
@@ -580,26 +605,26 @@ test('applyQueue: toggleTodo flips done', () => {
   applyQueue(l, [{ op: 'toggleTodo', args: { id: 't1' } }])
   assert.equal(l.todos[0].done, false)
 })
-test('applyQueue: deleteTodo removes', () => {
+await test('applyQueue: deleteTodo removes', () => {
   const l = buildDefaultLedger()
   applyQueue(l, [{ op: 'addTodo', args: { todo: { id: 't1', text: 'Buy soap', done: false, priority: 'normal', due: '', createdBy: '' } } }])
   applyQueue(l, [{ op: 'deleteTodo', args: { id: 't1' } }])
   assert.equal(l.todos.length, 0)
 })
-test('applyQueue: addEvent appends', () => {
+await test('applyQueue: addEvent appends', () => {
   const l = buildDefaultLedger()
   applyQueue(l, [{ op: 'addEvent', args: { event: { id: 'v1', title: 'Rent due', date: '2026-08-01', time: '09:00', color: 'red', createdBy: '' } } }])
   assert.equal(l.calendar_events.length, 1)
   assert.equal(l.calendar_events[0].title, 'Rent due')
   assert.equal(l.calendar_events[0].date, '2026-08-01')
 })
-test('applyQueue: deleteEvent removes', () => {
+await test('applyQueue: deleteEvent removes', () => {
   const l = buildDefaultLedger()
   applyQueue(l, [{ op: 'addEvent', args: { event: { id: 'v1', title: 'Party', date: '2026-08-15', time: '', color: 'red', createdBy: '' } } }])
   applyQueue(l, [{ op: 'deleteEvent', args: { id: 'v1' } }])
   assert.equal(l.calendar_events.length, 0)
 })
-test('buildCalendarGrid: Saturday-start padding + day count', () => {
+await test('buildCalendarGrid: Saturday-start padding + day count', () => {
   // August 2026 starts on a Saturday (weekday 6) and has 31 days.
   const grid = buildCalendarGrid(2026, 7)
   assert.equal(grid.length, 37) // 6 leading nulls + 31 days
@@ -609,7 +634,7 @@ test('buildCalendarGrid: Saturday-start padding + day count', () => {
   assert.equal(grid[6].dateStr, '2026-08-01')
   assert.equal(grid[36].day, 31)
 })
-test('buildCalendarGrid: September starts on Tuesday (2 leading nulls)', () => {
+await test('buildCalendarGrid: September starts on Tuesday (2 leading nulls)', () => {
   const grid = buildCalendarGrid(2026, 8)
   assert.equal(grid.length, 32) // 2 leading nulls + 30 days
   assert.equal(grid[0], null)
@@ -617,7 +642,7 @@ test('buildCalendarGrid: September starts on Tuesday (2 leading nulls)', () => {
   assert.equal(grid[2].day, 1)
   assert.equal(grid[2].dateStr, '2026-09-01')
 })
-test('eventsOnDate: counts events for a date', () => {
+await test('eventsOnDate: counts events for a date', () => {
   const events = [
     { id: 'v1', date: '2026-08-01' },
     { id: 'v2', date: '2026-08-01' },
@@ -626,40 +651,40 @@ test('eventsOnDate: counts events for a date', () => {
   assert.equal(eventsOnDate(events, '2026-08-01'), 2)
   assert.equal(eventsOnDate(events, '2026-08-03'), 0)
 })
-test('seedLedger: seeds defaults for empty input', () => {
+await test('seedLedger: seeds defaults for empty input', () => {
   const l = seedLedger(null)
   assert.ok(l.house_config)
   assert.ok(Array.isArray(l.meal_log))
 })
-test('seedLedger: passes through valid ledger', () => {
+await test('seedLedger: passes through valid ledger', () => {
   const l = buildDefaultLedger()
   const seeded = seedLedger(l)
   assert.equal(seeded, l)
 })
-test('seedLedger: rebuilds when expense_log is null (partial corruption)', () => {
+await test('seedLedger: rebuilds when expense_log is null (partial corruption)', () => {
   const l = buildDefaultLedger()
   l.expense_log = null
   const seeded = seedLedger(l)
   assert.ok(Array.isArray(seeded.expense_log))
 })
-test('seedLedger: rebuilds when deposit_ledger is missing', () => {
+await test('seedLedger: rebuilds when deposit_ledger is missing', () => {
   const l = buildDefaultLedger()
   delete l.deposit_ledger
   const seeded = seedLedger(l)
   assert.ok(Array.isArray(seeded.deposit_ledger))
 })
-test('seedLedger: rebuilds when announcements is not an array', () => {
+await test('seedLedger: rebuilds when announcements is not an array', () => {
   const l = buildDefaultLedger()
   l.announcements = { nope: true }
   const seeded = seedLedger(l)
   assert.ok(Array.isArray(seeded.announcements))
 })
-test('uniqueId: generates distinct IDs even in same millisecond', () => {
+await test('uniqueId: generates distinct IDs even in same millisecond', () => {
   const ids = new Set()
   for (let i = 0; i < 500; i++) ids.add(uniqueId('exp'))
   assert.equal(ids.size, 500)
 })
-test('uniqueId: prefixes are respected', () => {
+await test('uniqueId: prefixes are respected', () => {
   assert.ok(uniqueId('dep').startsWith('dep-'))
   assert.ok(uniqueId('ann').startsWith('ann-'))
 })
@@ -674,17 +699,17 @@ const {
   newAnnouncement,
 } = await import('../src/lib/notifications.js')
 
-test('isWithinWindow: evening window', () => {
+await test('isWithinWindow: evening window', () => {
   assert.ok(isWithinWindow(new Date(2026, 7, 23, 21, 30), 21, 22))
   assert.ok(!isWithinWindow(new Date(2026, 7, 23, 20, 30), 21, 22))
   assert.ok(!isWithinWindow(new Date(2026, 7, 23, 22, 0), 21, 22))
 })
-test('hasEntered: true when slot > 0', () => {
+await test('hasEntered: true when slot > 0', () => {
   assert.ok(hasEntered({ breakfast: 1, lunch: 0, dinner: 0 }, 'breakfast'))
   assert.ok(!hasEntered({ breakfast: 0, lunch: 0, dinner: 0 }, 'breakfast'))
   assert.ok(!hasEntered(null, 'breakfast'))
 })
-test('mealSlotCount: counts plates + guests', () => {
+await test('mealSlotCount: counts plates + guests', () => {
   const ledger = {
     meal_log: [
       { resident: 'nafiz', date: '2026-08-23', breakfast: 1, lunch: 0, dinner: 0, guests: { breakfast: 1, lunch: 0, dinner: 0 } },
@@ -695,7 +720,7 @@ test('mealSlotCount: counts plates + guests', () => {
   // nafiz 1 plate + 1 guest, mohin 1 plate, neloy 0 = 3
   assert.equal(mealSlotCount(ledger, ['nafiz', 'mohin', 'neloy'], '2026-08-23', 'breakfast'), 3)
 })
-test('mealReminderState: evening nag for missed breakfast+lunch', () => {
+await test('mealReminderState: evening nag for missed breakfast+lunch', () => {
   const ledger = { meal_log: [{ resident: 'neloy', date: '2026-08-24', breakfast: 0, lunch: 0, dinner: 0, guests: {} }] }
   const now = new Date(2026, 7, 23, 21, 30) // evening, tomorrow = 08-24
   const r = mealReminderState(now, ledger, ['neloy'])
@@ -704,13 +729,13 @@ test('mealReminderState: evening nag for missed breakfast+lunch', () => {
   assert.ok(r[0].body.toLowerCase().includes('breakfast'))
   assert.ok(r[0].body.toLowerCase().includes('lunch'))
 })
-test('mealReminderState: no nag when all slots entered', () => {
+await test('mealReminderState: no nag when all slots entered', () => {
   const ledger = { meal_log: [{ resident: 'neloy', date: '2026-08-24', breakfast: 1, lunch: 1, dinner: 0, guests: {} }] }
   const now = new Date(2026, 7, 23, 21, 30)
   const r = mealReminderState(now, ledger, ['neloy'])
   assert.equal(r.length, 0)
 })
-test('mealReminderState: afternoon nags only about dinner', () => {
+await test('mealReminderState: afternoon nags only about dinner', () => {
   const ledger = { meal_log: [{ resident: 'neloy', date: '2026-08-24', breakfast: 1, lunch: 1, dinner: 0, guests: {} }] }
   const now = new Date(2026, 7, 23, 14, 30) // afternoon
   const r = mealReminderState(now, ledger, ['neloy'])
@@ -718,11 +743,11 @@ test('mealReminderState: afternoon nags only about dinner', () => {
   assert.ok(r[0].body.toLowerCase().includes('dinner'))
   assert.ok(!r[0].body.toLowerCase().includes('breakfast'))
 })
-test('mealReminderState: empty when no residents', () => {
+await test('mealReminderState: empty when no residents', () => {
   const r = mealReminderState(new Date(2026, 7, 23, 21, 30), { meal_log: [] }, [])
   assert.equal(r.length, 0)
 })
-test('mealSummaryState: reports all three slots', () => {
+await test('mealSummaryState: reports all three slots', () => {
   const ledger = {
     meal_log: [
       { resident: 'nafiz', date: '2026-08-23', breakfast: 1, lunch: 2, dinner: 3, guests: {} },
@@ -736,7 +761,7 @@ test('mealSummaryState: reports all three slots', () => {
   assert.ok(s.body.includes('Lunch: 3'))
   assert.ok(s.body.includes('Dinner: 3'))
 })
-test('newAnnouncement: returns newest when different from stored', () => {
+await test('newAnnouncement: returns newest when different from stored', () => {
   const store = { 'roomshare:lastAnnounced': { id: 'old' } }
   const getItem = (k) => JSON.stringify(store[k] || null)
   const setItem = (k, v) => { store[k] = JSON.parse(v) }
@@ -753,7 +778,7 @@ test('newAnnouncement: returns newest when different from stored', () => {
     globalThis.localStorage = { getItem: origGet, setItem: origSet }
   }
 })
-test('newAnnouncement: null when newest matches stored', () => {
+await test('newAnnouncement: null when newest matches stored', () => {
   const store = { 'roomshare:lastAnnounced': { id: 'same' } }
   const ledger = { announcements: [{ id: 'same', text: 'No gas', date: '2026-08-23' }] }
   const origGet = globalThis.localStorage?.getItem
@@ -779,15 +804,15 @@ const {
   decidePushBatch,
 } = await import('../src/lib/pushDecisions.js')
 
-test('localDateStr: formats local Y/m/d', () => {
+await test('localDateStr: formats local Y/m/d', () => {
   const d = new Date(2026, 7, 28, 9, 30)
   assert.equal(localDateStr(d), '2026-08-28')
 })
-test('tomorrowStr: adds one day', () => {
+await test('tomorrowStr: adds one day', () => {
   const d = new Date(2026, 7, 28, 9, 30)
   assert.equal(tomorrowStr(d), '2026-08-29')
 })
-test('decideMealReminders: evening nags missed breakfast+lunch', () => {
+await test('decideMealReminders: evening nags missed breakfast+lunch', () => {
   const ledger = { meal_log: [{ resident: 'neloy', date: '2026-08-29', breakfast: 0, lunch: 0, dinner: 0, guests: {} }] }
   const r = decideMealReminders(ledger, ['neloy'], new Date(2026, 7, 28, 21, 30))
   assert.equal(r.length, 1)
@@ -795,24 +820,24 @@ test('decideMealReminders: evening nags missed breakfast+lunch', () => {
   assert.ok(r[0].body.toLowerCase().includes('breakfast'))
   assert.ok(r[0].body.toLowerCase().includes('lunch'))
 })
-test('decideMealReminders: no nag when all entered', () => {
+await test('decideMealReminders: no nag when all entered', () => {
   const ledger = { meal_log: [{ resident: 'neloy', date: '2026-08-29', breakfast: 1, lunch: 1, dinner: 0, guests: {} }] }
   const r = decideMealReminders(ledger, ['neloy'], new Date(2026, 7, 28, 21, 30))
   assert.equal(r.length, 0)
 })
-test('decideMealReminders: afternoon nags only dinner', () => {
+await test('decideMealReminders: afternoon nags only dinner', () => {
   const ledger = { meal_log: [{ resident: 'neloy', date: '2026-08-29', breakfast: 1, lunch: 1, dinner: 0, guests: {} }] }
   const r = decideMealReminders(ledger, ['neloy'], new Date(2026, 7, 28, 14, 30))
   assert.equal(r.length, 1)
   assert.ok(r[0].body.toLowerCase().includes('dinner'))
   assert.ok(!r[0].body.toLowerCase().includes('breakfast'))
 })
-test('decideMealReminders: no reminders outside windows', () => {
+await test('decideMealReminders: no reminders outside windows', () => {
   const ledger = { meal_log: [] }
   const r = decideMealReminders(ledger, ['neloy'], new Date(2026, 7, 28, 10, 0))
   assert.equal(r.length, 0)
 })
-test('decideMealSummary: reports all slots at 16:00', () => {
+await test('decideMealSummary: reports all slots at 16:00', () => {
   const ledger = { meal_log: [{ resident: 'nafiz', date: '2026-08-28', breakfast: 1, lunch: 2, dinner: 3, guests: {} }] }
   const s = decideMealSummary(ledger, ['nafiz'], new Date(2026, 7, 28, 16, 0))
   assert.equal(s.title, 'House meals today')
@@ -820,24 +845,24 @@ test('decideMealSummary: reports all slots at 16:00', () => {
   assert.ok(s.body.includes('Lunch: 2'))
   assert.ok(s.body.includes('Dinner: 3'))
 })
-test('decideMealSummary: null at other hours via batch', () => {
+await test('decideMealSummary: null at other hours via batch', () => {
   const ledger = { meal_log: [] }
   const batch = decidePushBatch(ledger, ['nafiz'], new Date(2026, 7, 28, 10, 0))
   const summary = batch.messages.find((m) => m.tag === 'meal-summary')
   assert.equal(summary, undefined)
 })
-test('decideNewAnnouncement: returns newest', () => {
+await test('decideNewAnnouncement: returns newest', () => {
   const ledger = { announcements: [{ id: 'ann-1', text: 'No gas', date: '2026-08-28' }] }
   const a = decideNewAnnouncement(ledger, null)
   assert.equal(a.title, 'House announcement')
   assert.equal(a.body, 'No gas')
 })
-test('decideNewAnnouncement: null when already announced', () => {
+await test('decideNewAnnouncement: null when already announced', () => {
   const ledger = { announcements: [{ id: 'ann-1', text: 'No gas', date: '2026-08-28' }] }
   const a = decideNewAnnouncement(ledger, 'ann-1')
   assert.equal(a, null)
 })
-test('decidePushBatch: combines reminders + summary + announcement', () => {
+await test('decidePushBatch: combines reminders + summary + announcement', () => {
   const ledger = {
     meal_log: [{ resident: 'neloy', date: '2026-08-29', breakfast: 0, lunch: 0, dinner: 0, guests: {} }],
     announcements: [{ id: 'ann-9', text: 'Bazar today', date: '2026-08-28' }],
@@ -850,6 +875,103 @@ test('decidePushBatch: combines reminders + summary + announcement', () => {
   assert.ok(summary, 'summary should fire at 16:00')
   assert.ok(ann, 'announcement should fire')
   assert.equal(batch.nextAnnouncedId, 'ann-9')
+})
+
+console.log('\n=== security.js (signup + password verify) ===')
+const {
+  signupAllowed,
+  isFirstUser,
+  verifyUserPassword,
+  hashPassword,
+  generateSalt,
+} = await import('../src/lib/security.js')
+
+const twoUsers = [
+  { id: 'nafiz', username: 'nafiz', role: 'admin', active: true, salt: 's1', passwordHash: 'h1' },
+  { id: 'neloy', username: 'neloy', role: 'resident', active: true, salt: 's2', passwordHash: 'h2' },
+]
+
+await test('signupAllowed: first user (no users) is allowed', () => {
+  assert.deepEqual(signupAllowed([], 'whatever'), { allowed: true })
+  assert.deepEqual(signupAllowed(null, ''), { allowed: true })
+})
+await test('signupAllowed: closed when no invite code is published', () => {
+  const r = signupAllowed(twoUsers, 'ABC123', { inviteCode: '' })
+  assert.equal(r.allowed, false)
+  assert.ok(/closed/i.test(r.reason))
+})
+await test('signupAllowed: closed when the users node is empty-string code', () => {
+  const r = signupAllowed(twoUsers, 'ABC123', {})
+  assert.equal(r.allowed, false)
+})
+await test('signupAllowed: rejected with a wrong invite code', () => {
+  const r = signupAllowed(twoUsers, 'WRONG1', { inviteCode: 'RIGHT1' })
+  assert.equal(r.allowed, false)
+  assert.ok(/invalid/i.test(r.reason))
+})
+await test('signupAllowed: accepted with the exact invite code (trims whitespace)', () => {
+  const r = signupAllowed(twoUsers, '  RIGHT1 ', { inviteCode: 'RIGHT1' })
+  assert.equal(r.allowed, true)
+})
+
+await test('verifyUserPassword: matches a correct password', async () => {
+  const salt = generateSalt()
+  const user = { salt, passwordHash: await hashPassword('correct horse', salt) }
+  assert.equal(await verifyUserPassword(user, 'correct horse'), true)
+})
+await test('verifyUserPassword: rejects a wrong password', async () => {
+  const salt = generateSalt()
+  const user = { salt, passwordHash: await hashPassword('correct horse', salt) }
+  assert.equal(await verifyUserPassword(user, 'wrong horse'), false)
+})
+await test('verifyUserPassword: rejects a null user', async () => {
+  assert.equal(await verifyUserPassword(null, 'x'), false)
+})
+
+console.log('\n=== logic.js (invite code) ===')
+const { generateInviteCode } = await import('../src/lib/logic.js')
+
+await test('generateInviteCode: 8 chars from the unambiguous alphabet', () => {
+  for (let i = 0; i < 50; i++) {
+    const code = generateInviteCode()
+    assert.equal(code.length, 8)
+    assert.ok(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{8}$/.test(code), code)
+  }
+})
+await test('generateInviteCode: produces distinct codes', () => {
+  const set = new Set(Array.from({ length: 200 }, () => generateInviteCode()))
+  assert.ok(set.size > 190)
+})
+
+console.log('\n=== backup.js (encrypt/decrypt round trip + validation) ===')
+const { parseLedgerBackup } = await import('../src/lib/backup.js')
+const { encryptLedger } = await import('../src/lib/ledgerCrypto.js')
+const { buildDefaultLedger: bdl } = await import('../src/lib/types.js')
+
+await test('parseLedgerBackup: round-trips a valid encrypted ledger', async () => {
+  const original = bdl()
+  original.announcements = [{ id: 'a1', text: 'hello', by: 'nafiz' }]
+  const envelope = await encryptLedger(JSON.stringify(original, null, 2), '')
+  const restored = await parseLedgerBackup(envelope)
+  assert.equal(restored.announcements.length, 1)
+  assert.equal(restored.announcements[0].text, 'hello')
+  assert.ok(Array.isArray(restored.meal_log))
+  assert.ok(Array.isArray(restored.users))
+})
+await test('parseLedgerBackup: rejects garbage (not a valid envelope/JSON)', async () => {
+  await assert.rejects(() => parseLedgerBackup('this is not json at all'))
+})
+await test('parseLedgerBackup: rejects an envelope with a wrong password', async () => {
+  // Node test env has no VITE_HOUSE_PASSWORD, so the file is encrypted with ''
+  // and parseLedgerBackup also uses ''. Simulate a mismatch by encrypting with
+  // a different password — decryption must fail, not produce a ledger.
+  const original = bdl()
+  const foreign = await encryptLedger(JSON.stringify(original), 'other-password')
+  await assert.rejects(() => parseLedgerBackup(foreign), /password|corrupted/i)
+})
+await test('parseLedgerBackup: rejects a JSON file missing required nodes', async () => {
+  const envelope = await encryptLedger(JSON.stringify({ hello: 'world' }), '')
+  await assert.rejects(() => parseLedgerBackup(envelope), /required sections/i)
 })
 
 console.log(`\n${'='.repeat(40)}`)

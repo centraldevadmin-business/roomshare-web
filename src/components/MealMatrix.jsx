@@ -79,9 +79,10 @@ export default function MealMatrix({
                 <button
                   onClick={(ev) => {
                     ev.stopPropagation()
-                    if (setGuests) setGuests(resident, date, s.key, guestCell(e, s.key) - 1)
+                    if (setGuests) setGuests(resident, date, s.key, Math.max(0, guestCell(e, s.key) - 1))
                   }}
-                  className="w-5 h-5 flex items-center justify-center bg-slate-200 text-slate-600 rounded-full transition-colors"
+                  disabled={guestCell(e, s.key) <= 0}
+                  className="w-5 h-5 flex items-center justify-center bg-slate-200 text-slate-600 rounded-full transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                   title="Remove guest plate"
                 >
                   <MinusIcon size={12} />

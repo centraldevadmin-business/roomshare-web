@@ -60,6 +60,10 @@ export const defaultHouseConfig = {
   cutoffHour: 21, // meals lock at 9 PM (21:00)
   bazarIntervalDays: 3,
   cutoffDay: 28, // month finalization day
+  // Invite code for self-service signup. Empty = signup closed (admin adds
+  // members from the Members screen). Set from House Settings; anyone who
+  // signs up with a valid code joins as a resident.
+  inviteCode: '',
   // Settlement model (end-of-month cash split).
   // Meal weights per slot: breakfast = 0.5, lunch = 1, dinner = 1.
   mealWeights: { breakfast: 0.5, lunch: 1, dinner: 1 },
@@ -136,6 +140,9 @@ export function buildDefaultLedger() {
     deposit_ledger: [],
     // carried-over balances from previous months: { [resident]: number }
     balances: {},
+    // vacation ranges per resident: { [resident]: [{ start, end }] } — meals
+    // on those dates are waived by the billing logic.
+    vacations: {},
     // admin announcements pushed to the "digital fridge"
     announcements: [],
     // community to-do list — anyone can add, everyone can check off

@@ -12,7 +12,7 @@ import { CartIcon, PlusIcon, MinusIcon, CheckIcon, CloseIcon } from './Icons'
 //   resident    - current resident id (shown as "paid by")
 //   recent      - last few grocery expenses, newest first (for the "just logged"
 //                 confirmation + running total)
-export default function BazarLog({ onLogBazar, resident, recent = [] }) {
+export default function BazarLog({ onLogBazar, resident, residentName, recent = [] }) {
   const [open, setOpen] = useState(false)
   const [items, setItems] = useState([{ item: '', price: '' }])
   const [done, setDone] = useState(false)
@@ -56,7 +56,7 @@ export default function BazarLog({ onLogBazar, resident, recent = [] }) {
       {open && (
         <div className="px-4 pb-4 border-t border-slate-100 pt-3">
           <p className="text-xs text-slate-400 mb-3">
-            Enter each item with its price. The total becomes a grocery expense paid by {resident}.
+            Enter each item with its price. The total becomes a grocery expense paid by {residentName || resident}.
           </p>
           <form onSubmit={submit} className="space-y-2">
             {items.map((it, i) => (
@@ -78,7 +78,9 @@ export default function BazarLog({ onLogBazar, resident, recent = [] }) {
                 <button
                   type="button"
                   onClick={removeItem}
-                  className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-100 text-slate-400 hover:text-red-500"
+                  disabled={items.length <= 1}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg bg-slate-100 text-slate-400 hover:text-red-500 disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={items.length <= 1 ? 'At least one item row is required' : 'Remove item'}
                   aria-label="Remove item"
                 >
                   <MinusIcon size={14} />

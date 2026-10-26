@@ -7,7 +7,7 @@ import GuestLog from '../components/GuestLog'
 import VacationMode from '../components/VacationMode'
 import SelfResetPasswordCard from '../components/SelfResetPasswordCard'
 import { todayStr, uniqueId, headCountForDate, computeMealRate, computeDebt } from '../lib/logic'
-import { RESIDENT_IDS } from '../lib/users'
+import { activeResidentIds } from '../lib/users'
 
 // Section: Resident Dashboard.
 // Head Count (cook for N) + Bazar Log + Meal Matrix + Debt Visualizer +
@@ -22,8 +22,10 @@ export default function ResidentDashboard({
   removeVacation,
   addBazar,
   changePassword,
+  changeOwnPassword,
 }) {
-  const residents = RESIDENT_IDS
+  // Active members from the ledger (new members count automatically).
+  const residents = activeResidentIds(ledger)
   const config = ledger.house_config
   const today = todayStr()
   const tomorrow = todayStr(new Date(Date.now() + 86400000))
@@ -74,20 +76,18 @@ export default function ResidentDashboard({
         totalPlates={totalPlates}
       />
 
-      <BazarLog onLogBazar={logBazar} resident={session.id} recent={recentGroceries} />
+      <BazarLog onLogBazar={logBazar} resident={session.id} residentName={session.name} recent={recentGroceries} />
 
       <DebtCard balance={balance} currency={config.currency} />
 
-      {/* Self-service password reset — only visible to the full admin (nafiz).
-          Lets him change his own password without asking anyone. The hook
-          generates a strong password, hashes it with a fresh salt, and pushes
-          it to the ledger. Returns the plaintext so he can copy it. */}
-      {session?.role === 'admin' && (
-        <SelfResetPasswordCard
-          session={session}
-          changePassword={changePassword}
-        />
-      )}
+      {/* Self-service password change — visible to EVERYONE. Residents type
+          their current + a new password themselves; the full admin also gets
+          the one-tap "generate a strong password" option. */}
+      <SelfResetPasswordCard
+        session={session}
+        changePassword={changePassword}
+        changeOwnPassword={changeOwnPassword}
+      />
 
       <MealMatrix
         resident={session.id}

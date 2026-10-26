@@ -107,6 +107,12 @@ export default function UserManagement({ ledger, session, createUser, updateUser
   }
 
   const toggleActive = (u) => {
+    // Deactivating yourself would lock the admin out of the house — the
+    // last admin has to stay sign-in-able.
+    if (u.active && u.id === session?.id) {
+      setError('You cannot deactivate your own account while you are signed in.')
+      return
+    }
     setUserActive(u.id, !u.active)
   }
 
@@ -360,7 +366,7 @@ export default function UserManagement({ ledger, session, createUser, updateUser
               <div className="relative mb-3">
                 <KeyIcon size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input
-                  type={shownPassword ? 'text' : 'text'}
+                  type="password"
                   value={passwordText}
                   onChange={(e) => setPasswordText(e.target.value)}
                   placeholder="Type a custom password…"

@@ -32,6 +32,15 @@ function ghConfig() {
   }
 }
 
+// Local-only mode: when VITE_GITHUB_REPO is not set (e.g. plain `npm run dev`
+// with no .env.local), the app runs against the in-memory default ledger and
+// edits stay in the local queue. We do NOT treat this as an error — it is a
+// valid demo/development mode, and surfacing a red sync-error banner on every
+// screen would be noise.
+export function isConfigured() {
+  return !!env('VITE_GITHUB_REPO')
+}
+
 // localStorage keys for the offline queue + last etag.
 const QUEUE_KEY = 'roomshare:queue'
 const ETAG_KEY = 'roomshare:etag'
@@ -89,9 +98,7 @@ async function apiRequest(method, url, body, headers = {}) {
 // Fetch the file content + its ETag.
 export async function fetchFile() {
   const cfg = ghConfig()
-  if (!cfg.repo) {
-    throw new Error('GitHub not configured. Copy .env.example to .env.local and set VITE_GITHUB_REPO + VITE_WORKER_URL.')
-  }
+  if (!cfg.repo) return null // local-only mode: no remote file
   const url = `${API}/contents/master_ledger.json`
   const res = await apiRequest('GET', url)
   if (res.status === 404) return null // file does not exist yet
@@ -189,8 +196,15 @@ const QUEUE_OPS = {
     return l
   },
   setGuests: (l, { resident, date, slot, value }) => {
-    const entry = l.meal_log.find((m) => m.resident === resident && m.date === date)
-    if (entry) entry.guests[slot] = value
+    let entry = l.meal_log.find((m) => m.resident === resident && m.date === date)
+    if (!entry) {
+      // A resident can add guest plates without toggling a meal for the day —
+      // that must still bill, so create the entry like toggleMeal does instead
+      // of silently dropping the guest count.
+      entry = { resident, date, breakfast: 0, lunch: 0, dinner: 0, guests: { breakfast: 0, lunch: 0, dinner: 0 } }
+      l.meal_log.push(entry)
+    }
+    entry.guests[slot] = Math.max(0, Math.floor(Number(value) || 0))
     return l
   },
   addExpense: (l, { expense }) => {
@@ -231,6 +245,13 @@ const QUEUE_OPS = {
     l.announcements.unshift({ id: uniqueId('ann'), text, date: new Date().toISOString(), by: by || 'House' })
     return l
   },
+  // Admin moderation: remove a community post (e.g. a stale "No gas today"
+  // alert that would otherwise sit on the marquee board forever).
+  removeAnnouncement: (l, { id }) => {
+    if (!Array.isArray(l.announcements)) return l
+    l.announcements = l.announcements.filter((a) => a.id !== id)
+    return l
+  },
   updateConfig: (l, { patch }) => {
     l.house_config = { ...l.house_config, ...patch }
     return l
@@ -262,6 +283,11 @@ const QUEUE_OPS = {
     return l
   },
   addVacation: (l, { resident, start, end }) => {
+    // Defense in depth: an inverted/missing range (end < start) would store
+    // data that isOnVacation() can never match — the resident sees a row that
+    // waives nothing. The form validates this; this guard protects the ledger
+    // against stale queued ops and manual edits.
+    if (!start || !end || end < start) return l
     if (!l.vacations) l.vacations = {}
     if (!Array.isArray(l.vacations[resident])) l.vacations[resident] = []
     l.vacations[resident].push({ start, end })
@@ -341,6 +367,7 @@ const QUEUE_OPS = {
 // The main sync routine. Pulls the latest, applies this device's queue,
 // and pushes back — retrying on 409 conflicts.
 export async function sync(ledger, queue) {
+  if (!isConfigured()) return { ledger, created: false } // local-only mode
   const pull = await fetchFile()
   if (!pull) {
     // No file yet: seed with defaults, apply queue, create it.
@@ -412,6 +439,7 @@ export function seedLedger(ledger) {
 
 // Force-overwrite: admin overwrites the GitHub file with local data.
 export async function forceOverwrite(ledger) {
+  if (!isConfigured()) return // local-only mode: nothing to overwrite
   // Fetch the current file to get its SHA (required by the GitHub API for
   // updates), then overwrite with local data.
   const pull = await fetchFile()

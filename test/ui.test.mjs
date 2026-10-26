@@ -116,6 +116,32 @@ test('MealMatrix renders Breakfast/Lunch/Dinner + Tomorrow', () => {
   assert.ok(out.includes('Tomorrow'))
 })
 
+test('MealMatrix: guest minus button is disabled at 0 guests', () => {
+  // Pin the clock to 10:00 so no slot is locked (dinner locks at 16:00,
+  // breakfast/lunch at the 21:00 cutoff) and the grid is deterministic.
+  const RealDate = Date
+  globalThis.Date = class extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) return new RealDate(2026, 7, 23, 10, 0, 0)
+      return new RealDate(...args)
+    }
+  }
+  try {
+    const out = renderToString(h(MealMatrix, {
+      resident: 'resident1', date: '2026-08-23', tomorrow: '2026-08-24',
+      entry: { resident: 'resident1', date: '2026-08-23', breakfast: 1, lunch: 1, dinner: 1, guests: { breakfast: 0, lunch: 0, dinner: 0 } },
+      tomorrowEntry: null, onToggle: () => {}, setGuests: () => {}, showGuests: true, title: 'Meal Matrix', ledger: { house_config: { cutoffHour: 21 } },
+    }))
+    const minusButtons = (out.match(/<button[^>]*>/g) || []).filter((b) => b.includes('title="Remove guest plate"'))
+    assert.ok(minusButtons.length >= 3, `expected guest minus buttons, got ${minusButtons.length}`)
+    for (const b of minusButtons) {
+      assert.ok(b.includes('disabled'), 'minus button must be disabled at 0 guests')
+    }
+  } finally {
+    globalThis.Date = RealDate
+  }
+})
+
 const ActionRow = (await import('../src/components/ActionRow.jsx')).default
 test('ActionRow renders Tomorrow meals', () => {
   const out = renderToString(h(ActionRow, {
@@ -148,6 +174,14 @@ test('VacationMode lists existing vacation with Remove', () => {
   const out = renderToString(h(VacationMode, { resident: 'resident1', vacations: { resident1: [{ start: '2026-09-01', end: '2026-09-10' }] }, onAdd: () => {}, onRemove: () => {} }))
   assert.ok(out.includes('2026-09-01'))
   assert.ok(out.includes('Remove'))
+})
+test('VacationMode requires both dates and rejects end < start', () => {
+  // Validation lives in the submit handler (SSR can't fire clicks), so the
+  // guards are verified in the component source.
+  const src = readFileSync(new URL('../src/components/VacationMode.jsx', import.meta.url), 'utf8')
+  assert.ok(src.includes('if (!start || !end)'), 'missing both-dates guard')
+  assert.ok(src.includes('end < start'), 'missing inverted-range guard')
+  assert.ok(src.includes('The end date must be on or after the start date.'), 'missing inverted-range error text')
 })
 
 const HouseSettings = (await import('../src/components/HouseSettings.jsx')).default
@@ -198,6 +232,28 @@ test('AnnouncementFeed renders Community Board + templates', () => {
   }))
   assert.ok(out.includes('Community Board'))
   assert.ok(out.includes('No gas today'))
+})
+test('AnnouncementFeed: delete control renders only for admins', () => {
+  const ann = [{ id: 'a1', text: 'Bazar today', by: 'Neloy', date: '2026-08-25' }]
+  const adminOut = renderToString(h(AnnouncementFeed, { announcements: ann, onPost: () => {}, onPostPrebuilt: () => {}, isAdmin: true, onDelete: () => {} }))
+  assert.ok(adminOut.includes('Remove post'), 'admin must see the delete control')
+  const residentOut = renderToString(h(AnnouncementFeed, { announcements: ann, onPost: () => {}, onPostPrebuilt: () => {}, isAdmin: false }))
+  assert.ok(!residentOut.includes('Remove post'), 'residents must not see the delete control')
+})
+
+const ErrorBoundary = (await import('../src/components/ErrorBoundary.jsx')).default
+test('ErrorBoundary renders children when nothing throws', () => {
+  const out = renderToString(h(ErrorBoundary, null, h('div', null, 'healthy content')))
+  assert.ok(out.includes('healthy content'))
+})
+test('ErrorBoundary renders the reload card when in error state', () => {
+  // React 18's renderToString does not run error-boundary capture (only the
+  // streaming APIs do), so exercise the fallback branch directly.
+  const boundary = new ErrorBoundary({ children: null })
+  boundary.state = { error: new Error('kaboom') }
+  const out = renderToString(boundary.render())
+  assert.ok(out.includes('Something went wrong'))
+  assert.ok(out.includes('Reload the app'))
 })
 
 const TodoList = (await import('../src/components/TodoList.jsx')).default

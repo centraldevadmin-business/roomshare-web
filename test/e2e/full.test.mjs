@@ -69,8 +69,11 @@ test.describe('Login Gate', () => {
 })
 
 test.describe('Signup Flow', () => {
-  test('first user signs up as admin', async ({ page }) => {
-    // Clear any persisted ledger so this is the first user.
+  test('signup is closed without a published invite code', async ({ page }) => {
+    // The default ledger always has the 3 seeded house accounts, so the
+    // "first user becomes admin" branch only exists on a truly empty ledger
+    // (covered by unit tests). With users present and no invite code in
+    // house_config, signup MUST be refused — and we must not land in the app.
     await page.goto('/')
     await page.waitForLoadState('networkidle')
     await page.evaluate(() => localStorage.clear())
@@ -80,7 +83,9 @@ test.describe('Signup Flow', () => {
     await page.fill('input[placeholder="Username"]', 'testadmin')
     await page.fill('input[placeholder="Password"]', 'testpass123')
     await page.click('button[type="submit"]')
-    await expect(page.locator('text=ADMIN')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('text=Signup is closed')).toBeVisible({ timeout: 5000 })
+    // Must NOT have logged in — no role badge, still on the login screen.
+    await expect(page.locator('h1:has-text("House Ledger")')).toBeVisible()
   })
 
   test('signup is gated behind an invite code', async ({ page }) => {
@@ -151,8 +156,9 @@ test.describe('Resident Dashboard — Full Feature', () => {
     await expect(addBtns.first()).toBeVisible()
     await addBtns.first().click()
     await addBtns.first().click()
-    // The breakfast count should now be 2.
-    await expect(page.getByText('2')).toContainText('2')
+    // The breakfast count should now be 2 — the section's own summary line
+    // (a bare "2" matches the balance, the date, and other counters).
+    await expect(guestLog.getByText('2 guest plate(s) added today.')).toBeVisible()
   })
 
   test('Bazar logging: add line items and submit', async ({ page }) => {
@@ -281,7 +287,7 @@ test.describe('Admin — Expense Operations', () => {
     await page.getByRole('combobox').first().selectOption('utility')
     await page.locator('input[placeholder*="$ 0.00"]').first().fill('1500')
     await page.locator('input[placeholder="e.g. Whole Foods"]').fill('Electricity Board')
-    await page.getByRole('button', { name: 'Deposit Log' }).click()
+    await page.getByRole('button', { name: 'Log Expense' }).click()
     await expect(page.getByText('Electricity Board')).toBeVisible({ timeout: 5000 })
 
     // 2. Edit the expense amount.
@@ -290,7 +296,9 @@ test.describe('Admin — Expense Operations', () => {
     await editBtn.click()
     await page.locator('input[placeholder="Amount"]').first().fill('2000')
     await page.getByRole('button', { name: 'Save Changes' }).click()
-    await expect(page.getByText('2,000')).toBeVisible({ timeout: 5000 })
+    // Exact match: the filter summary line ("1 of 1 entries · TK 2,000") also
+    // contains the number, so a loose substring match would be ambiguous.
+    await expect(page.getByText('TK 2,000', { exact: true })).toBeVisible({ timeout: 5000 })
 
     // 3. Lock the expense.
     const lockBtn = page.getByRole('button', { name: 'Lock' }).first()
@@ -298,9 +306,10 @@ test.describe('Admin — Expense Operations', () => {
     await lockBtn.click()
     await expect(page.getByText('LOCKED')).toBeVisible({ timeout: 5000 })
 
-    // 4. Delete the expense.
+    // 4. Delete the expense (confirmation dialog first).
     const delBtn = page.getByRole('button', { name: 'Delete' }).first()
     await expect(delBtn).toBeVisible()
+    page.once('dialog', (d) => d.accept())
     await delBtn.click()
     await expect(page.getByText('Electricity Board')).toHaveCount(0)
   })
@@ -328,15 +337,18 @@ test.describe('Admin — Settlement & Finalize', () => {
 
   test('Finalize month triggers Excel download', async ({ page }) => {
     await page.getByRole('button', { name: 'Control' }).click()
-    const downloadPromise = page.waitForEvent('download')
-    // Finalize button.
     const finalizeBtn = page.getByRole('button', { name: 'Finalize Month' })
     if (await finalizeBtn.isEnabled()) {
+      // Register the download promise only when a download can actually
+      // happen — the gate disables the button before house_config.cutoffDay,
+      // in which case there is no download to wait for.
+      const downloadPromise = page.waitForEvent('download')
       await finalizeBtn.click()
       const download = await downloadPromise
       expect(download.suggestedFilename().endsWith('.xlsx')).toBe(true)
     } else {
-      // Not ready to finalize yet (open expenses) — that's fine, button exists.
+      // Not ready to finalize yet (before the cutoff day) — that's fine,
+      // the button exists and is intentionally disabled.
       await expect(finalizeBtn).toBeVisible()
     }
   })
@@ -375,7 +387,11 @@ test.describe('CAdmin Access', () => {
   test('cadmin can log in and sees admin tabs', async ({ page }) => {
     await login(page, CADMIN)
     await expect(page.locator('text=CADMIN')).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Maid Board' })).toBeVisible()
+    // CAdmin starts in resident mode (like the full admin); flip to admin
+    // mode via the menu toggle, exactly like nafiz does.
+    await page.getByTitle('Menu').first().click()
+    await page.getByRole('button', { name: /Resident Mode|Admin Mode/ }).click()
+    await expect(page.getByRole('button', { name: 'Maid Board' })).toBeVisible({ timeout: 5000 })
     await expect(page.getByRole('button', { name: 'Community' })).toBeVisible()
   })
 })

@@ -10,6 +10,7 @@ export default function CommunityScreen({
   todos = [],
   events = [],
   postAnnouncement,
+  deleteAnnouncement,
   addTodo,
   toggleTodo,
   deleteTodo,
@@ -24,6 +25,7 @@ export default function CommunityScreen({
         announcements={announcements}
         onPost={(text) => postAnnouncement(text)}
         onPostPrebuilt={(text) => postAnnouncement(text)}
+        onDelete={isAdmin ? deleteAnnouncement : null}
         isAdmin={isAdmin}
       />
       <TodoList

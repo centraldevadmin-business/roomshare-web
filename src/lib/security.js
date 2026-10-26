@@ -147,8 +147,14 @@ export function clearSession() {
 export async function createUser(users, { name, email, username, password, role }) {
   const normEmail = (email || '').toLowerCase().trim()
   const normUser = String(username || '').toLowerCase().trim()
+  // Uniqueness check. An EMPTY email must not count as a match: the seeded
+  // house accounts have no email, and the invite-code signup form does not
+  // collect one either. Comparing '' === '' made every invite signup fail
+  // with "already exists" on the very first account.
   const existing = users.find(
-    (u) => (u.email || '').toLowerCase() === normEmail || u.username.toLowerCase() === normUser
+    (u) =>
+      (normEmail !== '' && (u.email || '').toLowerCase() === normEmail) ||
+      (u.username || '').toLowerCase() === normUser
   )
   if (existing) {
     throw new Error('A user with that email or username already exists.')
@@ -156,7 +162,11 @@ export async function createUser(users, { name, email, username, password, role 
   const salt = generateSalt()
   const passwordHash = await hashPassword(password, salt)
   return {
-    id: `user_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+    // The house screens (settlement, deposits, paid-by, rent editor) display a
+    // member's id as their label — the seeded accounts all use
+    // id === username, so new members must too. An opaque "user_xxx" token
+    // would show up as the member's name everywhere in the app.
+    id: normUser || `user_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
     name,
     email: normEmail,
     username: normUser,
@@ -174,21 +184,40 @@ export async function authenticate(users, username, password) {
     (x) => x.username.toLowerCase() === String(username ?? '').trim().toLowerCase()
   )
   if (!u || !u.active) return null
-  const hash = await hashPassword(password, u.salt || '')
-  if (hash === u.passwordHash || hash === u.hash) {
-    return { id: u.id, name: u.name, email: u.email, username: u.username, role: u.role }
-  }
-  return null
+  const ok = await verifyUserPassword(u, password)
+  if (!ok) return null
+  return { id: u.id, name: u.name, email: u.email, username: u.username, role: u.role }
+}
+
+// Verify a password against one user record's stored salt + hash. Exported so
+// the self-service "change my password" flow can check the CURRENT password
+// before swapping in a new hash.
+export async function verifyUserPassword(user, password) {
+  if (!user) return false
+  const hash = await hashPassword(password, user.salt || '')
+  return hash === user.passwordHash || hash === user.hash
 }
 
 // ---- Invite code logic ----
+// Signup rules:
+//   1. First user on a fresh ledger (no users at all) → allowed, becomes admin.
+//   2. Otherwise, an admin must publish an invite code in
+//      house_config.inviteCode (House Settings). With a code published, anyone
+//      who signs up with the right code joins as a resident.
+//   3. No code published → signup closed (admin adds people from Members).
 export function isFirstUser(users) {
   return !users || users.length === 0
 }
 
-export function signupAllowed(users, inviteCode) {
+export function signupAllowed(users, inviteCode, houseConfig = {}) {
   if (isFirstUser(users)) return { allowed: true }
-  const configInvite = '' // empty = signup closed
-  if (!configInvite) return { allowed: false, reason: 'Signup is closed. Ask an admin to add you.' }
-  return { allowed: inviteCode === configInvite }
+  const configured = String(houseConfig?.inviteCode || '').trim()
+  if (!configured) {
+    return { allowed: false, reason: 'Signup is closed. Ask an admin to share an invite code.' }
+  }
+  const given = String(inviteCode || '').trim()
+  if (!given || given !== configured) {
+    return { allowed: false, reason: 'Invalid invite code.' }
+  }
+  return { allowed: true }
 }

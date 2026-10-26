@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react'
 import { exportAndShare, computeBalances } from '../lib/excel'
 import { todayStr, canFinalizeMonth } from '../lib/logic'
-import { RESIDENT_IDS } from '../lib/users'
+import { activeResidentIds, displayNameFor } from '../lib/users'
+import { downloadLedgerBackup, parseLedgerBackup } from '../lib/backup.js'
 import HouseSettings from '../components/HouseSettings'
-import { PinIcon, CheckIcon, TrashIcon, WarningIcon, ReceiptIcon, RefreshIcon, PlateIcon } from '../components/Icons'
+import { PinIcon, CheckIcon, TrashIcon, WarningIcon, ReceiptIcon, RefreshIcon, PlateIcon, DownloadIcon } from '../components/Icons'
 
 // Section: Admin Control Center — deposit inbox, daily matrix, finalize month.
 export default function AdminControlCenter({
@@ -11,6 +12,7 @@ export default function AdminControlCenter({
   setDepositStatus,
   finalizeMonth,
   forceSyncOverwrite,
+  restoreLedger,
   setAnnouncement,
   updateConfig,
 }) {
@@ -21,8 +23,9 @@ export default function AdminControlCenter({
     setFridgeText('')
   }
   const config = ledger.house_config
-  const residents = RESIDENT_IDS
-  const names = Object.fromEntries(RESIDENT_IDS.map((id) => [id, id]))
+  // Active members from the ledger (new members count automatically).
+  const residents = activeResidentIds(ledger)
+  const names = Object.fromEntries(residents.map((id) => [id, displayNameFor(ledger.users, id)]))
   const today = todayStr()
 
   const totalGroceries = useMemo(
@@ -45,6 +48,42 @@ export default function AdminControlCenter({
 
   const [finalizing, setFinalizing] = useState(false)
   const [finalizeError, setFinalizeError] = useState('')
+  const [backupMsg, setBackupMsg] = useState(null) // { kind: 'ok'|'err', text }
+
+  // Backup: encrypt the live ledger (same envelope as the GitHub file) and
+  // download it. Restore: decrypt + validate the picked file, confirm, then
+  // overwrite GitHub with it.
+  const handleBackup = async () => {
+    setBackupMsg(null)
+    try {
+      await downloadLedgerBackup(ledger, `roomshare-backup-${today}.json`)
+      setBackupMsg({ kind: 'ok', text: 'Backup downloaded — it is encrypted with the house password.' })
+    } catch (e) {
+      setBackupMsg({ kind: 'err', text: e.message || 'Backup failed.' })
+    }
+  }
+  const handleRestoreFile = async (e) => {
+    const file = e.target.files && e.target.files[0]
+    e.target.value = ''
+    if (!file) return
+    setBackupMsg(null)
+    try {
+      const text = await file.text()
+      const restored = await parseLedgerBackup(text)
+      const ok = window.confirm(
+        `Replace the live ledger with backup "${file.name}"?\n\n` +
+        'This overwrites the data currently on GitHub. Do this only to recover from a bad write or data loss.'
+      )
+      if (!ok) {
+        setBackupMsg({ kind: 'ok', text: 'Restore cancelled — nothing was changed.' })
+        return
+      }
+      await restoreLedger(restored)
+      setBackupMsg({ kind: 'ok', text: `Restored from ${file.name}.` })
+    } catch (err) {
+      setBackupMsg({ kind: 'err', text: err.message || 'Restore failed.' })
+    }
+  }
   const finalize = () => {
     const gate = canFinalizeMonth(ledger)
     if (!gate.ok) {
@@ -123,7 +162,7 @@ export default function AdminControlCenter({
       </div>
 
       {/* House settings */}
-      <HouseSettings config={ledger.house_config} onSave={updateConfig} />
+      <HouseSettings config={ledger.house_config} users={ledger.users} onSave={updateConfig} />
 
       {/* Month-to-date progress */}
       <div className="bg-white border border-slate-200 rounded-2xl p-4">
@@ -226,6 +265,44 @@ export default function AdminControlCenter({
       >
         <RefreshIcon size={15} /> Force Sync &amp; Overwrite (from local data)
       </button>
+
+      {/* Backup & Restore — disaster recovery for the single-file ledger. */}
+      <div className="bg-white border border-slate-200 rounded-2xl p-4">
+        <h3 className="font-bold text-lg mb-1 text-slate-800 flex items-center gap-2">
+          <DownloadIcon size={18} /> Backup &amp; Restore
+        </h3>
+        <p className="text-xs text-slate-400 mb-3">
+          The whole ledger is one encrypted file. Keep a copy on your phone —
+          if GitHub data is ever lost or corrupted, restore from a backup.
+        </p>
+        {backupMsg && (
+          <div className={`text-xs rounded-lg px-3 py-2 mb-3 flex items-center gap-2 ${
+            backupMsg.kind === 'ok'
+              ? 'bg-emerald-50 border border-emerald-200 text-emerald-700'
+              : 'bg-red-50 border border-red-200 text-red-600'
+          }`}>
+            {backupMsg.kind === 'ok' ? <CheckIcon size={14} /> : <WarningIcon size={14} />}
+            {backupMsg.text}
+          </div>
+        )}
+        <div className="flex gap-2">
+          <button
+            onClick={handleBackup}
+            className="flex-1 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2"
+          >
+            <DownloadIcon size={15} /> Download Backup
+          </button>
+          <label className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold py-2.5 rounded-lg transition-colors flex items-center justify-center gap-2 cursor-pointer">
+            Restore from Backup
+            <input
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={handleRestoreFile}
+            />
+          </label>
+        </div>
+      </div>
     </div>
   )
 }

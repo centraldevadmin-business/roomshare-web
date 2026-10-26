@@ -361,6 +361,17 @@ export function eventsOnDate(events, dateStr) {
   return (events || []).filter((e) => e.date === dateStr).length
 }
 
+// ---- Invite code generator (self-service signup) ----
+// 8 uppercase alphanumeric chars, excluding look-alikes (0/O, 1/I/L) so a
+// code is easy to read off a screen or type on a phone.
+export function generateInviteCode() {
+  const alphabet = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'
+  const bytes = crypto.getRandomValues(new Uint8Array(8))
+  let out = ''
+  for (const b of bytes) out += alphabet[b % alphabet.length]
+  return out
+}
+
 // ---- Unique ID generator ----
 // Queue entries (expenses, deposits, announcements) need stable, unique IDs.
 // Date.now().toString() alone can collide when two entries are created within

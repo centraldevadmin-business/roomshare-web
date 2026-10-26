@@ -6,7 +6,7 @@ import {
   mealSummaryState,
   newAnnouncement,
 } from '../lib/notifications.js'
-import { RESIDENT_IDS } from '../lib/users.js'
+import { activeResidentIds } from '../lib/users.js'
 
 // Notifications hook. Wires the pure detection logic in notifications.js to the
 // browser's Notification API.
@@ -52,15 +52,18 @@ export function useNotifications(session, ledger) {
     function tick() {
       if (cancelled) return
       const now = new Date()
+      // Derive residents from the ledger's users node so members added later
+      // get reminders too (fallback: the three seeded accounts).
+      const residents = activeResidentIds(ledger)
 
       // Meal reminders (evening: breakfast+lunch tomorrow; afternoon: dinner).
-      for (const r of mealReminderState(now, ledger, RESIDENT_IDS)) {
+      for (const r of mealReminderState(now, ledger, residents)) {
         notifyOnce(r)
       }
 
       // Meal summary at 04:00 and 16:00.
       if (now.getHours() === 4 || now.getHours() === 16) {
-        notifyOnce(mealSummaryState(now, ledger, RESIDENT_IDS))
+        notifyOnce(mealSummaryState(now, ledger, residents))
       }
 
       // New announcement.

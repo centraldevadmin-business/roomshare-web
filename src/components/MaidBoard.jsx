@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import clsx from 'clsx'
 import { todayStr, isSlotLocked } from '../lib/logic'
 import { MEAL_SLOTS } from '../lib/types.js'
-import { RESIDENT_IDS } from '../lib/users'
+import { activeResidentIds, displayNameFor } from '../lib/users'
 import {
   MegaphoneIcon,
   SunIcon,
@@ -48,20 +48,23 @@ export default function MaidBoard({
   const today = todayStr()
   const config = ledger.house_config || {}
   const cutoffHour = config.cutoffHour ?? 21
+  // Active members from the ledger (new members count automatically).
+  const residents = activeResidentIds(ledger)
 
   // Today's meal entries for every resident.
   const entries = useMemo(() => {
     const map = {}
-    for (const id of RESIDENT_IDS) {
+    for (const id of residents) {
       map[id] = ledger.meal_log.find((m) => m.resident === id && m.date === today) || null
     }
     return map
-  }, [ledger.meal_log, today])
+  // residents derives from ledger, so ledger in deps covers membership changes.
+  }, [ledger, today])
 
   // Head count per meal: plates + guests, across everyone.
   const headCount = useMemo(() => {
     const c = { breakfast: 0, lunch: 0, dinner: 0 }
-    for (const id of RESIDENT_IDS) {
+    for (const id of residents) {
       const e = entries[id]
       if (!e) continue
       c.breakfast += (e.breakfast || 0) + (e.guests?.breakfast || 0)
@@ -73,7 +76,7 @@ export default function MaidBoard({
 
   // Total distinct people eating today (any meal).
   const peopleEating = useMemo(() => {
-    return RESIDENT_IDS.filter((id) => {
+    return residents.filter((id) => {
       const e = entries[id]
       if (!e) return false
       const total =
@@ -81,7 +84,8 @@ export default function MaidBoard({
         (e.guests?.breakfast || 0) + (e.guests?.lunch || 0) + (e.guests?.dinner || 0)
       return total > 0
     }).length
-  }, [entries])
+  // residents derives from ledger, so ledger in deps covers membership changes.
+  }, [entries, ledger])
 
   const post = (text) => {
     if (!text.trim()) return
@@ -145,7 +149,7 @@ export default function MaidBoard({
       <div className="bg-white border border-slate-200 rounded-2xl p-4">
         <h3 className="font-bold text-sm text-slate-700 mb-3">Who's eating what</h3>
         <div className="space-y-2">
-          {RESIDENT_IDS.map((id) => {
+          {residents.map((id) => {
             const e = entries[id]
             const hasAny =
               (e?.breakfast || 0) + (e?.lunch || 0) + (e?.dinner || 0) +
@@ -158,7 +162,7 @@ export default function MaidBoard({
                   hasAny ? 'border-emerald-200 bg-emerald-50/40' : 'border-slate-100 bg-slate-50/50'
                 )}
               >
-                <span className="font-medium text-slate-700">{id}</span>
+                <span className="font-medium text-slate-700">{displayNameFor(ledger.users, id)}</span>
                 <div className="flex items-center gap-3">
                   {MEAL_SLOTS.map((slot) => {
                     const on = (e?.[slot] || 0) + (e?.guests?.[slot] || 0) > 0
@@ -189,13 +193,13 @@ export default function MaidBoard({
           If someone hasn't tapped yet, set their meals for today in one tap.
         </p>
         <div className="grid grid-cols-3 gap-2">
-          {RESIDENT_IDS.map((id) => {
+          {residents.map((id) => {
             const e = entries[id]
             const hasAny =
               (e?.breakfast || 0) + (e?.lunch || 0) + (e?.dinner || 0) > 0
             return (
               <div key={id} className="rounded-xl border border-slate-200 p-2">
-                <div className="text-xs font-semibold text-slate-600 mb-2 text-center">{id}</div>
+                <div className="text-xs font-semibold text-slate-600 mb-2 text-center">{displayNameFor(ledger.users, id)}</div>
                 <div className="grid grid-cols-3 gap-1">
                   {MEAL_SLOTS.map((slot) => {
                     const locked = isSlotLocked(slot, new Date(), cutoffHour)

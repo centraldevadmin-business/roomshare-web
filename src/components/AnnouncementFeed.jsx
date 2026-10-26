@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { PREBUILT_ANNOUNCEMENTS } from '../lib/types.js'
-import { FireIcon, WaterIcon, ZapIcon, CartIcon, BroomIcon, SparkleIcon, MegaphoneIcon } from './Icons'
+import { FireIcon, WaterIcon, ZapIcon, CartIcon, BroomIcon, SparkleIcon, MegaphoneIcon, TrashIcon } from './Icons'
 
 const ICON_MAP = {
   fire: <FireIcon size={14} />,
@@ -18,6 +18,7 @@ export default function AnnouncementFeed({
   announcements = [],
   onPost,
   onPostPrebuilt,
+  onDelete,
   isAdmin,
 }) {
   const [text, setText] = useState('')
@@ -72,10 +73,25 @@ export default function AnnouncementFeed({
           <div className="text-[11px] text-slate-400 font-medium">Recent</div>
           {announcements.map((a) => (
             <div key={a.id} className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
-              <div className="text-sm text-amber-900">{a.text}</div>
-              <div className="text-[10px] text-amber-500 mt-1">
-                {a.by ? `· ${a.by}` : ''}
-                {a.date ? ` · ${new Date(a.date).toLocaleDateString()}` : ''}
+              <div className="flex items-start gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm text-amber-900">{a.text}</div>
+                  <div className="text-[10px] text-amber-500 mt-1">
+                    {a.by ? `· ${a.by}` : ''}
+                    {a.date ? ` · ${new Date(a.date).toLocaleDateString()}` : ''}
+                  </div>
+                </div>
+                {isAdmin && onDelete && (
+                  <button
+                    type="button"
+                    onClick={() => onDelete(a.id)}
+                    title="Remove post"
+                    aria-label="Remove post"
+                    className="shrink-0 text-amber-400 hover:text-red-500 transition-colors"
+                  >
+                    <TrashIcon size={13} />
+                  </button>
+                )}
               </div>
             </div>
           ))}
