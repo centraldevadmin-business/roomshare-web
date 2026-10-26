@@ -298,6 +298,7 @@ export function computeSettlement(ledger, residents) {
     fixedCosts,
     totalFixedCosts: totalFixed,
     fixedCostShare: fixedCostShareAmt,
+    utilityShare: utilityShareAmt,
     rentPerPerson,
     rentFreeResident,
     perPerson,

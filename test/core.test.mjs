@@ -436,6 +436,13 @@ await test('computeSettlement: per-person rent + variable utilities split equall
   const s = computeSettlement(ledger, ['resident1', 'resident2', 'resident3'])
   // utilities: 900 / 3 = 300 per person
   assert.equal(s.totalUtilities, 900)
+  // Regression: SettlementScreen destructures a TOP-LEVEL utilityShare and
+  // calls .toFixed(0) on it inside the `{totalUtilities > 0 && …}` block. If
+  // computeSettlement forgets to return it, the Settlement tab crashes with
+  // "Cannot read properties of undefined (reading 'toFixed')" as soon as any
+  // utility expense exists (production hit this via a pooled gas bill).
+  assert.equal(typeof s.utilityShare, 'number')
+  assert.equal(s.utilityShare, 300)
   assert.equal(s.perPerson.resident1.utilityShare, 300)
   assert.equal(s.perPerson.resident2.utilityShare, 300)
   assert.equal(s.perPerson.resident3.utilityShare, 300)
