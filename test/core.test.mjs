@@ -450,7 +450,59 @@ await test('computeSettlement: per-person rent + variable utilities split equall
 })
 
 console.log('\n=== githubSync.js (applyQueue) ===')
-const { applyQueue, seedLedger } = await import('../src/lib/githubSync.js')
+const { applyQueue, seedLedger, loadQueue, clearQueue } = await import('../src/lib/githubSync.js')
+
+// ---- clearQueue: targeted clearing (the mid-sync wipe bug) ----
+// A sync captures the queue at start and pushes it. Ops enqueued WHILE the
+// sync is in flight were not part of that push, so clearQueue(applied) must
+// remove only the applied snapshot — otherwise a login sync finishing after
+// a user action silently deletes the action's queued write.
+function withQueueStore(run) {
+  const store = {}
+  const origGet = globalThis.localStorage?.getItem
+  const origSet = globalThis.localStorage?.setItem
+  globalThis.localStorage = {
+    getItem: (k) => store[k] ?? null,
+    setItem: (k, v) => { store[k] = v },
+    removeItem: (k) => { delete store[k] },
+  }
+  return run(store).finally(() => {
+    if (origGet) globalThis.localStorage = { getItem: origGet, setItem: origSet }
+    else delete globalThis.localStorage
+  })
+}
+await test('clearQueue(applied) keeps ops enqueued mid-sync', async () => {
+  await withQueueStore(async (store) => {
+    // The sync starts and captures this snapshot of the queue...
+    const early = { id: 'op_1', op: 'toggleMeal', args: {} }
+    store['roomshare:queue'] = JSON.stringify([early])
+    const snapshot = loadQueue()
+    // ...while this op is enqueued mid-flight.
+    const late = { id: 'op_2', op: 'addDeposit', args: {} }
+    store['roomshare:queue'] = JSON.stringify([early, late])
+    // The sync succeeds and clears exactly what it pushed.
+    clearQueue(snapshot)
+    const remaining = loadQueue()
+    assert.equal(remaining.length, 1)
+    assert.equal(remaining[0].id, 'op_2')
+  })
+})
+await test('clearQueue(applied) keeps legacy ops without an id (never drop unknowns)', async () => {
+  await withQueueStore(async (store) => {
+    const legacy = { op: 'addTodo', args: {} } // pre-id queue item
+    store['roomshare:queue'] = JSON.stringify([legacy])
+    const snapshot = loadQueue()
+    clearQueue(snapshot)
+    assert.equal(loadQueue().length, 1)
+  })
+})
+await test('clearQueue() with no args clears everything (restore/force path)', async () => {
+  await withQueueStore(async (store) => {
+    store['roomshare:queue'] = JSON.stringify([{ id: 'op_1', op: 'x', args: {} }])
+    clearQueue()
+    assert.deepEqual(loadQueue(), [])
+  })
+})
 
 await test('applyQueue: toggleMeal creates entry', () => {
   const l = buildDefaultLedger()

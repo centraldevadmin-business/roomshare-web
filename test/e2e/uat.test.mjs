@@ -25,6 +25,11 @@ const RESIDENT = { username: 'neloy', password: 'House@Ledger#2026!' }
 const ADMIN = { username: 'nafiz', password: 'House@Ledger#2026!' }
 const CADMIN = { username: 'mohin', password: 'House@Ledger#2026!' }
 
+// The production ledger is shared (GitHub sync), so write tests must not
+// assume an empty state. A per-run token makes each write test identifiable
+// no matter what data the house already has.
+const RUN = `uat-${Date.now().toString(36)}`
+
 // Log in through the real sign-in form and dismiss the first-login tutorial.
 async function login(page, creds = RESIDENT) {
   // Navigate only when the app isn't already loaded: after an in-app logout
@@ -237,15 +242,19 @@ test.describe('UAT C — Resident dashboard (bazar, vacation, password)', () => 
 // ---------------------------------------------------------------------------
 test.describe('UAT D — Deposit inbox', () => {
   test('resident submits a deposit and the admin verifies it', async ({ page }) => {
+    const note = `Handed 500 to admin (${RUN})`
     await login(page, RESIDENT)
     await page.getByRole('button', { name: 'Ledger' }).click()
     await page.getByPlaceholder('Amount').fill('500')
-    await page.getByPlaceholder('Note: e.g.').fill('Handed 500 to admin')
+    await page.getByPlaceholder('Note: e.g.').fill(note)
     await page.getByRole('button', { name: 'Submit Deposit Request' }).click()
     await expect(page.getByRole('heading', { name: 'Recent Deposits' })).toBeVisible()
-    // "Stays pending until approved" (the form hint) also contains "pending",
-    // so only an exact, case-sensitive, whole-string match hits the badge.
-    await expect(page.getByText('PENDING', { exact: true })).toBeVisible()
+    // Scope to our own row: the shared ledger may already hold other pending
+    // deposits, so a bare "PENDING" match is ambiguous.
+    const myDeposit = page
+      .getByText(note, { exact: true })
+      .locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]')
+    await expect(myDeposit).toContainText('PENDING')
 
     // The in-memory ledger survives a logout on this page (no reload), so the
     // admin in the same browser sees the pending deposit in the inbox.
@@ -253,35 +262,54 @@ test.describe('UAT D — Deposit inbox', () => {
     await login(page, ADMIN)
     await toAdminMode(page)
     await page.getByRole('button', { name: 'Control' }).click()
-    await expect(page.getByText('neloy submitted TK 500')).toBeVisible()
-    await expect(page.getByText('Handed 500 to admin')).toBeVisible()
-    await page.getByRole('button', { name: 'Verify' }).click()
-    await expect(page.getByText('No pending deposits.')).toBeVisible()
+    const inboxRow = page
+      .getByText(note, { exact: true })
+      .locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]')
+    // The deposit op may still sit in the offline queue when the admin signs
+    // in (a sync can complete between the resident's write and this login,
+    // and the next sync re-applies the pending op). Wait generously.
+    await expect(inboxRow).toContainText('submitted TK 500', { timeout: 15000 })
+    await inboxRow.getByRole('button', { name: 'Verify' }).click()
+    // Our deposit left the inbox (other pending deposits may remain).
+    await expect(page.getByText(note, { exact: true })).toHaveCount(0)
   })
 
   test('admin can reject a deposit', async ({ page }) => {
+    const note = `Handed 300 for bazar (${RUN})`
     await login(page, RESIDENT)
     await page.getByRole('button', { name: 'Ledger' }).click()
     await page.getByPlaceholder('Amount').fill('300')
+    await page.getByPlaceholder('Note: e.g.').fill(note)
     await page.getByRole('button', { name: 'Submit Deposit Request' }).click()
-    await expect(page.getByText('PENDING', { exact: true })).toBeVisible()
+    const myDeposit = page
+      .getByText(note, { exact: true })
+      .locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]')
+    await expect(myDeposit).toContainText('PENDING')
 
     await logout(page)
     await login(page, ADMIN)
     await toAdminMode(page)
     await page.getByRole('button', { name: 'Control' }).click()
-    await page.getByRole('button', { name: 'Reject' }).click()
-    await expect(page.getByText('No pending deposits.')).toBeVisible()
+    const inboxRow = page
+      .getByText(note, { exact: true })
+      .locator('xpath=ancestor::div[contains(@class,"rounded-lg")][1]')
+    await inboxRow.getByRole('button', { name: 'Reject' }).click()
+    // Our deposit left the inbox (other pending deposits may remain).
+    await expect(page.getByText(note, { exact: true })).toHaveCount(0)
   })
 
   test('invalid deposit amount is rejected with an inline error', async ({ page }) => {
     await login(page, RESIDENT)
     await page.getByRole('button', { name: 'Ledger' }).click()
+    // The shared ledger may already hold pending deposits, so assert the count
+    // is unchanged rather than zero.
+    const pendingCount = () => page.getByText('PENDING', { exact: true }).count()
+    const before = await pendingCount()
     await page.getByPlaceholder('Amount').fill('-100')
     await page.getByRole('button', { name: 'Submit Deposit Request' }).click()
     await expect(page.getByText('Enter an amount greater than zero.')).toBeVisible()
-    // Nothing was queued — no pending badge appears.
-    await expect(page.getByText('PENDING', { exact: true })).toHaveCount(0)
+    // Nothing was queued.
+    await expect.poll(pendingCount).toBe(before)
   })
 })
 
@@ -305,14 +333,15 @@ test.describe('UAT E — Community', () => {
   })
 
   test('one-tap prebuilt notice posts without typing', async ({ page }) => {
-    await page.getByRole('button', { name: 'Maid absent tomorrow — order food' }).click()
-    // The prebuilt button and the header marquee keep the same text, so assert
-    // on the amber feed card specifically.
+    // The house may have posted this prebuilt notice before, so match by count
+    // delta and assert on the newest card (the feed is newest-first).
     const feedItem = page
       .locator('div.bg-amber-50')
       .filter({ hasText: 'Maid absent tomorrow — order food' })
-    await expect(feedItem).toBeVisible()
-    await expect(feedItem.getByText('· Neloy')).toBeVisible()
+    const before = await feedItem.count()
+    await page.getByRole('button', { name: 'Maid absent tomorrow — order food' }).click()
+    await expect.poll(async () => feedItem.count()).toBe(before + 1)
+    await expect(feedItem.first().getByText('· Neloy')).toBeVisible()
   })
 
   test('todo: add, complete, and no delete control for residents', async ({ page }) => {
@@ -382,29 +411,42 @@ test.describe('UAT F — Admin: Ledger Ops', () => {
   })
 
   test('filters narrow the expense log by type and search', async ({ page }) => {
-    await addExpense(page, { amount: 250, vendor: 'Dutch Bazar' })
-    await addExpense(page, { type: 'utility', amount: 300, vendor: 'City Gas' })
+    // Unique vendor names: the shared ledger already holds real expenses, so
+    // exact entry counts are unknowable — assert our own entries in/out.
+    const grocer = `UAT Bazar ${RUN}`
+    const utility = `UAT Gas ${RUN}`
+    await addExpense(page, { amount: 250, vendor: grocer })
+    await addExpense(page, { type: 'utility', amount: 300, vendor: utility })
 
-    // Type filter: groceries only.
+    // Type filter: groceries only — our grocer in, our utility out.
     const typeFilter = page.locator('select').nth(1)
     await typeFilter.selectOption('grocery')
-    await expect(page.getByText('Dutch Bazar')).toBeVisible()
-    await expect(page.getByText('City Gas')).toHaveCount(0)
-    await expect(page.getByText('1 of 2 entries')).toBeVisible()
+    await expect(page.getByText(grocer)).toBeVisible()
+    await expect(page.getByText(utility)).toHaveCount(0)
+    await expect(page.getByText(/\d+ of \d+ entries/)).toBeVisible()
 
     // Free-text search across the full log.
     await typeFilter.selectOption('all')
-    await page.getByPlaceholder('Search vendor, note, or paid-by…').fill('gas')
-    await expect(page.getByText('City Gas')).toBeVisible()
-    await expect(page.getByText('Dutch Bazar')).toHaveCount(0)
-    await expect(page.getByText('1 of 2 entries')).toBeVisible()
+    await page.getByPlaceholder('Search vendor, note, or paid-by…').fill(utility)
+    await expect(page.getByText(utility)).toBeVisible()
+    await expect(page.getByText(grocer)).toHaveCount(0)
+    await expect(page.getByText(/\d+ of \d+ entries/)).toBeVisible()
   })
 
   test('lock a posted expense', async ({ page }) => {
-    await addExpense(page, { amount: 150, vendor: 'Electricity' })
-    await page.getByRole('button', { name: 'Lock' }).click()
-    await expect(page.getByText('LOCKED')).toBeVisible()
-    await expect(page.getByRole('button', { name: 'Lock' })).toHaveCount(0)
+    const vendor = `UAT Power ${RUN}`
+    await addExpense(page, { amount: 150, vendor })
+    // Scope to our row: other unlocked expenses show their own Lock buttons.
+    const row = page
+      .getByText(vendor, { exact: true })
+      .locator('xpath=ancestor::div[contains(@class,"rounded-2xl")][1]')
+    // A sync that finishes right after the write can briefly re-render the
+    // list; the row returns once the pending op is re-applied, so wait for
+    // the button explicitly before clicking.
+    await expect(row.getByRole('button', { name: 'Lock' })).toBeVisible({ timeout: 15000 })
+    await row.getByRole('button', { name: 'Lock' }).click()
+    await expect(row).toContainText('LOCKED')
+    await expect(row.getByRole('button', { name: 'Lock' })).toHaveCount(0)
   })
 
   test('deleting an expense asks for confirmation first', async ({ page }) => {
@@ -520,21 +562,30 @@ test.describe('UAT H — Admin: Members', () => {
   })
 
   test('new member joins settlement automatically', async ({ page }) => {
+    // Unique per run: repeated production runs must not collide with members
+    // that earlier runs left in the shared ledger.
+    const uname = 'rafi' + RUN.slice(-6)
+    // The shared production ledger may already hold members from earlier
+    // runs, so read the current split denominator and assert it grows by one
+    // instead of hardcoding 4.
+    await page.getByRole('button', { name: 'Settlement' }).click()
+    const denomText = await page.getByText(/Fixed costs ÷ \d+/).first().innerText()
+    const before = Number(/Fixed costs ÷ (\d+)/.exec(denomText)[1])
+    await page.getByRole('button', { name: 'Members' }).click()
     await addMember(page, {
       name: 'Rafi Khan',
-      email: 'rafi@example.com',
-      username: 'rafi',
+      email: `${uname}@example.com`,
+      username: uname,
       password: 'Rafi@2026!',
     })
 
     // Member-aware settlement: the new member gets a card (labelled by their
-    // username, like the seeded accounts) and the split denominator grows
-    // from 3 to 4.
+    // username, like the seeded accounts) and the split denominator grows.
     await page.getByRole('button', { name: 'Settlement' }).click()
     await expect(page.getByRole('heading', { name: 'Monthly Settlement' })).toBeVisible()
-    await expect(page.getByText('rafi', { exact: true })).toBeVisible()
-    // One "Fixed costs ÷ N" row per resident card — 4 residents → 4 matches.
-    await expect(page.getByText('Fixed costs ÷ 4').first()).toBeVisible()
+    await expect(page.getByText(uname, { exact: true })).toBeVisible()
+    // One "Fixed costs ÷ N" row per resident card — the denominator grows by 1.
+    await expect(page.getByText(`Fixed costs ÷ ${before + 1}`).first()).toBeVisible()
   })
 
   test('duplicate username is rejected', async ({ page }) => {
@@ -558,15 +609,19 @@ test.describe('UAT H — Admin: Members', () => {
   })
 
   test('admin deletes a member', async ({ page }) => {
+    // Unique per run so a leftover from an earlier production run (if its
+    // delete op never persisted) cannot make the row locator ambiguous.
+    const uname = 'temp' + RUN.slice(-6)
+    const mname = `Temp ${RUN.slice(-6)}`
     await addMember(page, {
-      name: 'Temp Guy',
-      email: 'temp@example.com',
-      username: 'tempguy',
+      name: mname,
+      email: `${uname}@example.com`,
+      username: uname,
       password: 'Temp@1234',
     })
     page.once('dialog', (d) => d.accept())
-    await memberRow(page, 'Temp Guy').getByTitle('Delete').click()
-    await expect(memberRow(page, 'Temp Guy')).toHaveCount(0)
+    await memberRow(page, mname).getByTitle('Delete').click()
+    await expect(memberRow(page, mname)).toHaveCount(0)
   })
 
   test('admin cannot delete their own account', async ({ page }) => {
@@ -634,9 +689,12 @@ test.describe('UAT J — Signup & invite codes', () => {
     // 2. Log out and sign up in the same browser (the in-memory ledger keeps
     //    the published code across logout).
     await logout(page)
+    // Unique per run: 'rafi' from an earlier production run would make the
+    // signup fail with a duplicate username.
+    const uname = 'rafi' + RUN.slice(-6)
     await page.getByRole('button', { name: 'Sign Up' }).click()
     await page.getByPlaceholder('Full name').fill('Rafi Khan')
-    await page.getByPlaceholder('Username').fill('rafi')
+    await page.getByPlaceholder('Username').fill(uname)
     await page.getByPlaceholder('Password').fill('Rafi@2026!')
     // A wrong code is rejected…
     await page.getByPlaceholder('Invite code (from an admin)').fill('ZZZZZZZZ')

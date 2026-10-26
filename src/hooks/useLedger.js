@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { sync, fetchFile, pushQueue, applyQueue, forceOverwrite, seedLedger, clearQueue } from '../lib/githubSync.js'
 import { buildDefaultLedger } from '../lib/types.js'
 import { seedUsers } from '../lib/users.js'
-import { todayStr } from '../lib/logic.js'
+import { todayStr, uniqueId } from '../lib/logic.js'
 
 // Central ledger hook. Manages:
 //  - the in-memory ledger (source of truth for the UI)
@@ -64,7 +64,9 @@ export function useLedger(session) {
   const isFullAdmin = useCallback(() => session?.role === 'admin', [session])
   function enqueue(op, args) {
     const q = loadQueue()
-    q.push({ op, args, at: Date.now() })
+    // `id` lets clearQueue(applied) remove exactly the ops a sync pushed,
+    // so ops enqueued mid-sync are never wiped by a stale success.
+    q.push({ id: uniqueId('op'), op, args, at: Date.now() })
     localStorage.setItem('roomshare:queue', JSON.stringify(q))
     queueRef.current = q
   }
@@ -133,7 +135,27 @@ export function useLedger(session) {
       // or every op would be added twice (once by the action, once by the sync).
       // `sync()` handles the pull/merge/retry internally.
       const result = await sync(ledger, queue)
-      setLedger(result.ledger)
+      if (result.appliedAll) {
+        // Local-only mode (or no-file seed): the returned state IS the local
+        // state, so it already contains every queued op — use it as-is.
+        setLedger(result.ledger)
+      } else {
+        // Server state + the ops we just pushed. Ops enqueued while this sync
+        // was in flight were NOT in `queue`, so they are not in
+        // `result.ledger` either. Re-apply them on top so the UI keeps
+        // showing them; the debounced auto-flush pushes them on its next
+        // cycle. Without this, a login sync finishing after a user action
+        // would blank the row the user just created (and the old clearQueue
+        // would also lose the op).
+        const leftover = loadQueue()
+        if (leftover.length > 0) {
+          const withLeftover = structuredClone(result.ledger)
+          applyQueue(withLeftover, leftover)
+          setLedger(withLeftover)
+        } else {
+          setLedger(result.ledger)
+        }
+      }
       setLastSync(new Date())
     } catch (e) {
       setError(String(e.message || e))

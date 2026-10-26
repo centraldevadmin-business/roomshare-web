@@ -60,8 +60,20 @@ export function pushQueue(item) {
   q.push(item)
   saveQueue(q)
 }
-export function clearQueue() {
-  saveQueue([])
+// Clear the offline queue. Pass the ops a sync just pushed to clear ONLY
+// those — ops enqueued while the sync was in flight must survive. The old
+// unconditional wipe was a silent data-loss bug: a login sync that finished
+// after a user action deleted the action's queued op, so the write never
+// reached GitHub. Called with no args (restore / force-overwrite) clears
+// everything on purpose.
+export function clearQueue(applied) {
+  if (applied === undefined) {
+    saveQueue([])
+    return
+  }
+  const appliedIds = new Set(applied.map((i) => i && i.id).filter(Boolean))
+  const q = loadQueue().filter((i) => !i.id || !appliedIds.has(i.id))
+  saveQueue(q)
 }
 
 export function loadEtag() {
@@ -367,7 +379,11 @@ const QUEUE_OPS = {
 // The main sync routine. Pulls the latest, applies this device's queue,
 // and pushes back — retrying on 409 conflicts.
 export async function sync(ledger, queue) {
-  if (!isConfigured()) return { ledger, created: false } // local-only mode
+  // `appliedAll` tells the caller whether the returned state already holds
+  // EVERY queued op (local-only mode / no-file seed: it IS the local state)
+  // or only the snapshot we pushed (server merge: leftovers must be
+  // re-applied by the caller).
+  if (!isConfigured()) return { ledger, created: false, appliedAll: true } // local-only mode
   const pull = await fetchFile()
   if (!pull) {
     // No file yet: seed with defaults, apply queue, create it.
@@ -375,7 +391,10 @@ export async function sync(ledger, queue) {
     // NOTE: `ledger` already has every queued op applied by the calling action,
     // so we must NOT re-apply the queue here (that would double-add every op).
     await writeFile(JSON.stringify(seeded, null, 2), null)
-    return { ledger: seeded, created: true }
+    // Every queued op is now in the file we just wrote — clear the queue so
+    // the next sync does not apply them a second time on top of the file.
+    clearQueue()
+    return { ledger: seeded, created: true, appliedAll: true }
   }
 
   // Start from the authoritative server copy.
@@ -390,8 +409,10 @@ export async function sync(ledger, queue) {
     attempts++
     const ok = await writeFile(JSON.stringify(merged, null, 2), etag, pull.sha)
     if (ok) {
-      clearQueue()
-      return { ledger: merged, created: false }
+      // Clear ONLY the ops we just pushed (by id). Anything enqueued while
+      // this sync was in flight stays queued for the next flush.
+      clearQueue(queue)
+      return { ledger: merged, created: false, appliedAll: false }
     }
     // 409: someone else won. Re-pull and re-merge our queue.
     const repull = await fetchFile()

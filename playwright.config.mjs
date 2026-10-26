@@ -10,7 +10,9 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   reporters: ['list'],
   use: {
-    baseURL: 'http://localhost:5173',
+    // Default: local dev server. Point at another environment (e.g. the
+    // Cloudflare Pages production site) with E2E_BASE_URL=... npx playwright test
+    baseURL: process.env.E2E_BASE_URL || 'http://localhost:5173',
     trace: 'on-first-retry',
   },
   projects: [
