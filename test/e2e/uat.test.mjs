@@ -382,7 +382,17 @@ test.describe('UAT E — Community', () => {
     const feedItem = page
       .locator('div.bg-amber-50')
       .filter({ hasText: 'Maid absent tomorrow — order food' })
-    const before = await feedItem.count()
+    // The feed is pulled from the shared (synced) ledger and renders a beat
+    // after navigation — capture the baseline only once the count has settled,
+    // otherwise `before` reads 0 mid-pull and the delta assertion fails.
+    let stable = -1
+    let before = 0
+    for (let i = 0; i < 40; i++) {
+      const c = await feedItem.count()
+      if (c === stable) { before = c; break }
+      stable = c
+      await page.waitForTimeout(300)
+    }
     await page.getByRole('button', { name: 'Maid absent tomorrow — order food' }).click()
     await expect.poll(async () => feedItem.count()).toBe(before + 1)
     await expect(feedItem.first().getByText('· Neloy')).toBeVisible()
@@ -441,9 +451,12 @@ test.describe('UAT F — Admin: Ledger Ops', () => {
 
   test('log a grocery and a utility, then edit within the correction window', async ({ page }) => {
     const note = `rice + dal (${RUN})`
-    await addExpense(page, { amount: 250, vendor: 'Dutch Bazar', note })
+    // RUN-scoped vendors: the shared ledger holds 'Dutch Bazar'/'City Gas'
+    // rows from earlier runs, so a fixed vendor makes addExpense's
+    // getByText(vendor) a strict-mode violation on the second and later runs.
+    await addExpense(page, { amount: 250, vendor: `Dutch Bazar ${RUN}`, note })
     await expect(page.getByText(note)).toBeVisible()
-    await addExpense(page, { type: 'utility', amount: 300, vendor: 'City Gas', note: 'monthly gas' })
+    await addExpense(page, { type: 'utility', amount: 300, vendor: `City Gas ${RUN}`, note: 'monthly gas' })
 
     // Both entries are within the 24-hour correction window → editable.
     // Scope the Edit button to our own row: the shared ledger holds other
@@ -458,7 +471,9 @@ test.describe('UAT F — Admin: Ledger Ops', () => {
     await expect(editForm).toBeVisible()
     await editForm.locator('input[type="number"]').fill('275')
     await editForm.getByRole('button', { name: 'Save Changes' }).click()
-    await expect(page.getByText('TK 275')).toBeVisible({ timeout: 5000 })
+    // Scope to our row: every prior run also edits its grocery to 275, so a
+    // bare "TK 275" matches multiple rows in the shared ledger.
+    await expect(row.getByText('TK 275')).toBeVisible({ timeout: 5000 })
     // The edit is the last write of this test.
     await flushSettled(page)
   })
