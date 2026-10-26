@@ -590,8 +590,10 @@ test.describe('UAT H — Admin: Members', () => {
 
   test('new member joins settlement automatically', async ({ page }) => {
     // Unique per run: repeated production runs must not collide with members
-    // that earlier runs left in the shared ledger.
+    // that earlier runs left in the shared ledger (name AND username — a
+    // leftover "Rafi Khan" makes the getByText(name) assertion ambiguous).
     const uname = 'rafi' + RUN.slice(-6)
+    const mname = `Rafi ${RUN.slice(-6)}`
     // The shared production ledger may already hold members from earlier
     // runs, so read the current split denominator and assert it grows by one
     // instead of hardcoding 4.
@@ -600,7 +602,7 @@ test.describe('UAT H — Admin: Members', () => {
     const before = Number(/Fixed costs ÷ (\d+)/.exec(denomText)[1])
     await page.getByRole('button', { name: 'Members' }).click()
     await addMember(page, {
-      name: 'Rafi Khan',
+      name: mname,
       email: `${uname}@example.com`,
       username: uname,
       password: 'Rafi@2026!',
